@@ -1672,12 +1672,13 @@ agent_failure_modes:
       commit is no longer on the branch
     looks_like: one push error, read as the only failure; the branch then reports ahead=0 and a clean tree,
       exactly as if nothing had been written
-    tell: 'a push error and ahead=0 in the same run, and the commit is reachable only from `git reflog`'
-    sightings: 1
+    tell: 'a push or gate error and ahead=0 in the same run, and the commit is reachable only from `git reflog`'
+    sightings: 2
     unenforceable: the chain runs in an agent's ad-hoc shell before any in-tree script is called, and the
       remote's refusal is only knowable after the rebase has already moved HEAD
-    closed_by: on a protected branch, commit to a feature branch and open a PR — never rebase the protected
-      branch; and when a push is refused, read `git reflog` for the tip before re-doing the work
+    closed_by: tag the lane tip by NAME before any land or rebase, so recovery does not depend on the
+      reflog; on a protected branch commit to a feature branch and open a PR, never rebase the protected
+      branch; and when a push is refused, read the tag or `git reflog` before re-doing the work
     prevented_by: 'dry-run the push (`git push --dry-run`) or read the branch protection BEFORE rebasing'
     intake: 3.23.1
 staleness_discipline:
