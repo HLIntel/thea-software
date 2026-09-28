@@ -243,6 +243,46 @@ def machine_dependence_errors() -> list[str]:
     return errors
 
 
+def task_concern_errors() -> list[str]:
+    """Every task_profiles token resolves somewhere, and every declared concern is used by a profile.
+
+    WHY (3.37.0). 44 of the 59 tokens named nothing declared anywhere — real engineering concerns with no
+    home, so `thea id` answered `none` for a word an agent met in a profile it had just been handed. A
+    profile made of unresolvable words reads like a checklist and is a list of hopes.
+
+    IT ACCEPTS A TOKEN THAT RESOLVES IN ANY EXISTING ROSTER and does not demand a copy here: 15 tokens are
+    already gates or agent_policy controls, and a second declaration of a live name is the drift this tree
+    refuses everywhere else. Declare once, point at it from wherever it is needed.
+    """
+    errors: list[str] = []
+    profiles = atlas().get("task_profiles") or {}
+    concerns = dict(atlas().get("task_concerns") or {})
+    elsewhere = (set(atlas().get("gate_tools") or {}) | set(atlas().get("pack_actions") or {})
+                 | set((atlas().get("agent_policy") or {}).get("controls") or {}))
+    if not profiles or not concerns:
+        return ["task_profiles and task_concerns must both be declared; a profile of words that resolve "
+                "nowhere reads like a checklist and is a list of hopes"]
+    used: set[str] = set()
+    for profile, rows in sorted(profiles.items()):
+        for token in (rows if isinstance(rows, list) else []):
+            name = str(token)
+            used.add(name)
+            if name not in concerns and name not in elsewhere:
+                errors.append(f"task_profiles/{profile} names {name!r}, which resolves as no gate, pack "
+                              f"action, control or task_concern — declare what it means, or a profile "
+                              f"hands an agent a word with nothing behind it")
+    for name, meaning in sorted(concerns.items()):
+        if not str(meaning or "").strip():
+            errors.append(f"task_concerns/{name} states no meaning, so it resolves to its own name")
+        if name in elsewhere:
+            errors.append(f"task_concerns/{name} is ALSO declared as a gate or control — one name, one "
+                          f"declaration; point at the existing one instead of copying it")
+        if name not in used:
+            errors.append(f"task_concerns/{name} is used by no profile — dead vocabulary that reads as "
+                          f"coverage; wire it to a profile or delete it")
+    return errors
+
+
 def effect_errors() -> list[str]:
     """The effect lattice is closed, every row is decided, and the reference contract obeys its own rules.
 
@@ -435,6 +475,6 @@ def process_return_errors() -> list[str]:
 
 
 def declaration_errors() -> list[str]:
-    return effect_errors() + command_effect_errors() + machine_dependence_errors() + input_declaration_errors() + delegation_errors() + cadence_errors() + role_errors() + process_return_errors() + guide_reference_errors() + number_drift_errors() + \
+    return task_concern_errors() + effect_errors() + command_effect_errors() + machine_dependence_errors() + input_declaration_errors() + delegation_errors() + cadence_errors() + role_errors() + process_return_errors() + guide_reference_errors() + number_drift_errors() + \
         decision_evidence_errors() + hook_parity_errors() + (issue_route_errors() + model_route_errors() + front_end_errors() + drift_review_errors()
             + prose_reference_errors() + landed_state_errors())

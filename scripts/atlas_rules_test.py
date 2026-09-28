@@ -33,6 +33,7 @@ def run(module) -> None:
     resolver_cases()
     horizon_cases()
     effect_cases()
+    task_concern_cases()
 
 
 def _git(repo, *args: str) -> None:
@@ -679,3 +680,49 @@ def effect_cases() -> None:
              "two rosters keyed by the same subject where one is silently short, which stays invisible "
              "until a contract bounds effects and refuses a command that was always correct",
              True, "the two rosters are keyed by the same subject")
+
+
+def task_concern_cases() -> None:
+    """Every word a profile hands an agent resolves to a meaning, and none is declared twice (3.37.0).
+
+    44 of the 59 tokens in task_profiles named nothing declared anywhere, so `thea id` answered `none` for
+    a word an agent met in a profile it had just been handed. A profile made of unresolvable words reads
+    like a checklist and is a list of hopes.
+
+    THE SPECIFICITY HALF IS "DECLARE ONCE". 15 tokens already resolve as gates or controls, and the rule
+    must NOT demand a copy of them here — a second declaration of a live name is the drift this tree
+    refuses everywhere else, and the guard refuses the duplicate too.
+    """
+    import resolve
+    from atlascore import atlas as declaration
+    a = declaration()
+    profiles, concerns = a.get("task_profiles") or {}, a.get("task_concerns") or {}
+    elsewhere = (set(a.get("gate_tools") or {}) | set(a.get("pack_actions") or {})
+                 | set((a.get("agent_policy") or {}).get("controls") or {}))
+    tokens = {str(t) for rows in profiles.values() for t in (rows if isinstance(rows, list) else [])}
+    unresolved = sorted(t for t in tokens if t not in concerns and t not in elsewhere)
+    if unresolved:
+        raise SystemExit(f"FAIL {len(unresolved)} profile token(s) resolve to nothing: {unresolved[:4]}")
+    reused = sorted(t for t in tokens if t in elsewhere)
+    if not reused:
+        raise SystemExit("FAIL no token resolves through an existing roster, so declare-once is untested")
+    if set(concerns) & elsewhere:
+        raise SystemExit(f"FAIL a concern duplicates a live name: {sorted(set(concerns) & elsewhere)[:3]}")
+    for name in sorted(tokens):
+        if not resolve.resolve(name):
+            raise SystemExit(f"FAIL {name!r} is declared and `thea id` cannot find it")
+    CASES.append((f"all {len(tokens)} task-profile tokens resolve — {len(concerns)} as declared concerns and "
+                  f"{len(reused)} through a roster that already names them, with no name declared twice",
+                  "a profile handing an agent words with nothing behind them, and the opposite mistake of "
+                  "copying a live gate name into a second table where one copy goes stale"))
+    print(f"  ok    all {len(tokens)} task-profile tokens resolve, none declared twice")
+    with mutated("atlas.yaml", lambda s: s.replace("sidecar_metadata, citations]",
+                                                   "sidecar_metadata, citations, a_word_with_nothing_behind_it]", 1)):
+        case("a task-profile token that resolves to nothing FAILS",
+             "a profile that reads like a checklist and is a list of hopes",
+             True, "resolves as no gate, pack action, control or task_concern")
+    with mutated("atlas.yaml", lambda s: s.replace("  telemetry: ",
+                                                   "  codeql: 'a copy of a live gate name'\n  telemetry: ", 1)):
+        case("a concern that copies a name already declared as a gate FAILS",
+             "one name with two declarations, where the copy nobody reads goes stale first",
+             True, "one name, one declaration")

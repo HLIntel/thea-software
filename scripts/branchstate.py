@@ -261,7 +261,7 @@ def _land_once(branch: str) -> int:
 def version_claim_errors(branch: str) -> tuple[list[str], str]:
     """(collisions, coverage) — every OTHER open pull request that claims this lane's VERSION.
 
-    WHY (3.38.0). MEASURED: two sessions cut 3.35.0 at the same time, on pull requests 86 and 89, over a
+    WHY (3.36.0). MEASURED: two sessions cut 3.35.0 at the same time, on pull requests 86 and 89, over a
     main that was still at 3.34.0. Whichever merged first would win and the other would either conflict
     or ship real work under a number already taken — and `docs/VERSIONING.md` is one line per version, so
     a duplicate number silently attaches one version's line to another version's tag.
@@ -307,14 +307,6 @@ def land(branch: str) -> int:
     none is open, arming auto-merge — so repeating the whole sequence is safe, and the rule's own
     `escalate_after: one failed retry` is the bound: a second failure is two writers, not a race.
     """
-    # NOBODY ELSE MAY BE SHIPPING THIS NUMBER (3.38.0). Checked BEFORE the push, because after it the
-    # collision is already on the remote.
-    claims, coverage = version_claim_errors(branch)
-    print(f"version claim: {coverage}")
-    for claim in claims:
-        print(f"- {claim}")
-    if claims:
-        return 4
     first = _land_once(branch)
     if first == 0:
         return 0
@@ -429,7 +421,17 @@ def main(argv: list[str] | None = None) -> int:
     if argv and "--sync" in argv:
         return sync()
     if argv and "--land" in argv:
-        return land(_git("rev-parse", "--abbrev-ref", "HEAD"))
+        branch = _git("rev-parse", "--abbrev-ref", "HEAD")
+        # NOBODY ELSE MAY BE SHIPPING THIS NUMBER (3.36.0). A PRECONDITION, checked here rather than
+        # inside land(), which is the race-retry mechanism and nothing else — putting it there stopped an
+        # existing case from ever reaching the retry it exists to prove.
+        claims, coverage = version_claim_errors(branch)
+        print(f"version claim: {coverage}")
+        for claim in claims:
+            print(f"- {claim}")
+        if claims:
+            return 4
+        return land(branch)
     limits = bound()
     rows = branches()
     for row in sorted(rows, key=lambda r: -r["unpushed"]):

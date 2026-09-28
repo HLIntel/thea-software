@@ -209,6 +209,61 @@ enforcement:
       refuses the fixture for being the fixture, and a guard that fires on correct content gets
       switched off'
 
+# WHAT A TASK OF EACH KIND MUST ADDRESS (3.37.0). `task_profiles` listed 59 tokens and 44 of them
+# named nothing declared anywhere — real engineering concerns with no home, so `thea id` answered `none`
+# for a word an agent met in a profile it was handed. They are NOT gates: a gate is run and returns an
+# exit code, and these are things a change must have accounted for.
+#
+# DECLARED ONCE, POINTED AT ELSEWHERE. The other 15 tokens already resolve as gates or as agent_policy
+# controls and are deliberately NOT repeated here: a second copy of a live name is the drift this tree
+# refuses everywhere. The guard accepts a token that resolves as a gate, a pack action, a control OR a
+# concern below, and refuses one that resolves as none of them — so a new token needs a meaning first.
+task_concerns:
+  native: 'the runtime''s own edit and search tools, kept rather than replaced — Thea is added to an agent''s layer'
+  focused_context: only what the route named is loaded; breadth-first reading of this tree is the thing it refuses
+  focused_verify: 'the cheapest gates that can fail for this change, not the whole done set'
+  semantic_context: 'the neighbours a symbol actually has, found by the retrieval index rather than by guessing a filename'
+  diff_review: 'the diff is read before it lands, and it contains only the intended change'
+  native_debugger: 'the runtime''s own debugger, because a print statement is a worse instrument and it stays in the tree'
+  focused_repro: 'a reproduction narrower than the bug report, so the fix is known to address the cause'
+  regression_test: 'a test that fails on the old behaviour, or the fix is a belief'
+  native_http: 'the runtime''s own request tool, so the call is reproducible outside the agent'
+  schema_contract: 'the endpoint''s shape is declared and validated, never inferred from one response'
+  integration_test: 'the parts are exercised together, because each passing alone proves nothing about the seam'
+  browser_if_needed: a real browser only when the behaviour is the rendering; otherwise it is cost with no verdict
+  native_db: 'the runtime''s own database client, so a query can be re-run by a person'
+  read_only_dbhub: 'exploration happens on a read-only route, because a read that mutates is the one nobody reviews'
+  migration_test: the migration is applied and reversed on a throwaway copy before it touches anything else
+  plan_review: 'the plan is read before the change, because a schema change is expensive to reverse'
+  native_security: 'the runtime''s own scanners, so a finding survives outside this session'
+  semgrep: 'pattern-based static analysis over the diff, closed by the codeql gate for what patterns cannot see'
+  timeouts: 'every wait is bounded, because an unbounded one is a hang that reports nothing'
+  cancellation: 'work stops when its caller stops, or the process outlives the request that wanted it'
+  health_readiness: 'liveness and readiness are separate answers, and neither is a capability probe'
+  telemetry: the thing emits enough to be diagnosed without a rebuild
+  smoke_test: 'the shortest run that proves the path is wired at all, before anything slower'
+  existing_tests: 'the suite that already exists is green first, so a new failure has one cause'
+  mutation_tool_if_mature: a mutation tool only where the language has a mature one; elsewhere a planted defect by hand
+  bounded_mutants: 'the mutant count is bounded, because an unbounded run is a cost with no extra verdict'
+  regression_gate: 'the score cannot fall, and the bound only ever moves down'
+  schema_or_abi: 'the boundary has a declared shape on both sides, never a convention two languages happen to share'
+  native_tools_both_sides: 'each language is judged by its own toolchain, because one side''s linter cannot see the other'
+  boundary_test: 'the crossing itself is tested, since both sides passing says nothing about the seam'
+  e2e_if_needed: an end-to-end run only when the behaviour spans the boundary; otherwise it is slow and vague
+  primary_sources: 'the source itself, never a summary of one — a summary loses the number and the caveat'
+  isolated_context: the experiment runs where its result cannot be explained by something else in the tree
+  prototype: 'a throwaway answer first, so the design question is settled before the implementation cost'
+  measurement: 'a number from a named instrument, or the claim is unmeasured and says so'
+  ast_chunking: 'chunks are cut on declared syntax boundaries, never on a byte count that splits a function'
+  hybrid_search: 'lexical and semantic retrieval together, because either alone misses a different half'
+  checksum_invalidation: 'an index entry is invalidated by CONTENT, never by a name or a timestamp'
+  sidecar_metadata: 'provenance travels beside a chunk, so a retrieved line can be traced to its file'
+  citations: 'every retrieved claim names where it came from, or it cannot be checked'
+  native_simulator: 'the toolchain''s own simulator, so a result is reproducible without this agent'
+  shots_declared: 'the shot count is declared with the result, because a distribution without its n is not a measurement'
+  qubit_budget_declared: 'the width is declared before the run, since an over-wide circuit fails late and expensively'
+  classical_baseline: 'a classical comparison, or a quantum result has nothing to be better than'
+
 # WHAT AN ACTION CAN DO, DECLARED ONCE (3.38.0). A task contract named BINARIES, and a binary is not a
 # capability: `allowed_commands: [git]` grants reading, writing and PUBLISHING in one word, and the
 # example contract shipped exactly that. denied_commands catches a few shapes by pattern; nothing said
