@@ -31,12 +31,13 @@ The required checks are the gate: auto-merge waits on them, so nothing lands on 
 """
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-from atlascore import ROOT, atlas
+from atlascore import ROOT, atlas, worktree
 
 
 def merged_by_patch(branch: str, base_ref: str) -> bool:
@@ -51,7 +52,7 @@ def merged_by_patch(branch: str, base_ref: str) -> bool:
 
 
 def _git(*args: str) -> str:
-    done = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, check=False, timeout=600)
+    done = subprocess.run(["git", *args], cwd=worktree(), capture_output=True, text=True, check=False, timeout=600)
     return done.stdout.strip() if done.returncode == 0 else ""
 
 
@@ -160,7 +161,7 @@ def _pull_request(branch: str) -> tuple[dict | None, bool]:
         return None, False
     done = subprocess.run(["gh", "pr", "list", "--head", branch, "--state", "open",
                            "--json", "number,state,autoMergeRequest"],
-                          cwd=ROOT, capture_output=True, text=True, check=False, timeout=600)
+                          cwd=worktree(), capture_output=True, text=True, check=False, timeout=600)
     if done.returncode != 0:
         return None, False
     found = json.loads(done.stdout or "[]")
@@ -182,7 +183,7 @@ def clean_checkout_errors(gates: tuple = CLEAN_GATES) -> str | None:
     import tempfile
     with tempfile.TemporaryDirectory() as parent:
         clean = Path(parent) / "clean"
-        subprocess.run(["git", "worktree", "add", "-q", "--detach", str(clean), "HEAD"], cwd=ROOT, check=True, timeout=600)
+        subprocess.run(["git", "worktree", "add", "-q", "--detach", str(clean), "HEAD"], cwd=worktree(), check=True, timeout=600)
         try:
             for gate in gates:
                 done = subprocess.run([sys.executable, *gate], cwd=clean, capture_output=True, text=True, check=False, timeout=600)
@@ -190,7 +191,7 @@ def clean_checkout_errors(gates: tuple = CLEAN_GATES) -> str | None:
                     tail = (done.stdout + done.stderr).strip().splitlines()[-3:]
                     return f"`{' '.join(gate)}` exited {done.returncode}: {' | '.join(tail)[:300]}"
         finally:
-            subprocess.run(["git", "worktree", "remove", "--force", str(clean)], cwd=ROOT, check=False, timeout=600)
+            subprocess.run(["git", "worktree", "remove", "--force", str(clean)], cwd=worktree(), check=False, timeout=600)
     return None
 
 
@@ -208,17 +209,23 @@ def _land_once(branch: str) -> int:
     # commit is reachable only from the reflog, while the branch reports ahead=0 and a clean tree. A named
     # tag survives that, so recovery is `git reset --hard <tag>` instead of reading reflog by hand.
     rescue = f"lane/{branch.replace('/', '-')}/{_git('rev-parse', '--short', 'HEAD')}"
-    subprocess.run(["git", "tag", "-f", rescue], cwd=ROOT, capture_output=True, check=False, timeout=600)
+    subprocess.run(["git", "tag", "-f", rescue], cwd=worktree(), capture_output=True, check=False, timeout=600)
     print(f"  ok  tagged the tip {rescue} — if anything below is refused, the commit is still there")
     for step in (["git", "fetch", "--prune", "origin"], ["git", "rebase", f"origin/{base}"]):
-        done = subprocess.run(step, cwd=ROOT, capture_output=True, text=True, check=False, timeout=600)
+        done = subprocess.run(step, cwd=worktree(), capture_output=True, text=True, check=False, timeout=600)
         print(f"  {'ok ' if done.returncode == 0 else 'FAIL'} {' '.join(step)}")
         if done.returncode != 0:
-            subprocess.run(["git", "rebase", "--abort"], cwd=ROOT, capture_output=True, check=False, timeout=600)
+            subprocess.run(["git", "rebase", "--abort"], cwd=worktree(), capture_output=True, check=False, timeout=600)
             print("land: the rebase conflicts — aborted and REFUSING; resolve by hand, then land")
             return 1
     # DRIFT REVIEW ON A STRUCTURAL LANDING (3.6.0): surfaced in the session, not on a schedule.
-    subprocess.run([sys.executable, str(ROOT / "scripts" / "staleness.py"), "review"], cwd=ROOT, check=False, timeout=600)
+    # STALENESS REVIEWS THE ATLAS'S OWN PATHS, so it is only meaningful when the tree being landed IS
+    # the atlas. Run from an agent's repository it would report on somebody else's files, which is a
+    # confident wrong answer rather than a missing one.
+    if worktree() == ROOT.resolve():
+        subprocess.run([sys.executable, str(ROOT / "scripts" / "staleness.py"), "review"], cwd=worktree(), check=False, timeout=600)
+    else:
+        print(f"staleness review skipped: landing {worktree().name}, not the atlas it reads its policy from")
     refused = clean_checkout_errors()
     if refused:
         print(f"land: a CLEAN checkout of HEAD fails — REFUSING to push. {refused}")
@@ -237,7 +244,7 @@ def _land_once(branch: str) -> int:
     import os
     landing_env = {**os.environ, "ATLAS_LANDING": "1"}  # the one caller .githooks/pre-push admits
     for step in steps:
-        done = subprocess.run(step, cwd=ROOT, capture_output=True, text=True, check=False,
+        done = subprocess.run(step, cwd=worktree(), capture_output=True, text=True, check=False,
                               env=landing_env, timeout=600)
         print(f"  {'ok ' if done.returncode == 0 else 'FAIL'} {' '.join(step[:4])}")
         if done.returncode != 0:
@@ -251,6 +258,46 @@ def _land_once(branch: str) -> int:
 
 
 
+def version_claim_errors(branch: str) -> tuple[list[str], str]:
+    """(collisions, coverage) — every OTHER open pull request that claims this lane's VERSION.
+
+    WHY (3.38.0). MEASURED: two sessions cut 3.35.0 at the same time, on pull requests 86 and 89, over a
+    main that was still at 3.34.0. Whichever merged first would win and the other would either conflict
+    or ship real work under a number already taken — and `docs/VERSIONING.md` is one line per version, so
+    a duplicate number silently attaches one version's line to another version's tag.
+
+    IT SAYS WHEN IT COULD NOT LOOK. The forge is the only authority on which pull requests are open, so
+    with no `gh` and no network this prints NOT CHECKED with the reason rather than a clean line. It does
+    NOT refuse in that case: a landing is the owner's action and a coordination check that blocks work
+    when the network is down gets worked around, which is worse than one that says it is blind.
+    """
+    mine = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    listed = subprocess.run(["gh", "pr", "list", "--state", "open", "--json", "number,headRefName"],
+                            cwd=worktree(), capture_output=True, text=True, check=False, timeout=600)
+    if listed.returncode != 0 or not listed.stdout.strip():
+        return [], (f"NOT CHECKED: no answer from the forge about open pull requests, so nothing here "
+                    f"knows whether {mine} is already claimed ({listed.stderr.strip()[:80]})")
+    try:
+        rows = json.loads(listed.stdout)
+    except json.JSONDecodeError:
+        return [], "NOT CHECKED: the forge answered something this cannot parse"
+    collisions, compared = [], 0
+    for row in rows:
+        head = str(row.get("headRefName") or "")
+        if not head or head == branch:
+            continue
+        theirs = _git("show", f"origin/{head}:VERSION").strip()
+        if not theirs:
+            continue
+        compared += 1
+        if theirs == mine:
+            collisions.append(f"pull request #{row.get('number')} on {head!r} already claims VERSION "
+                              f"{mine} — two lanes cannot ship one number, and docs/VERSIONING.md is one "
+                              f"line per version, so the loser's line attaches to the winner's tag. "
+                              f"Renumber one lane before landing")
+    return collisions, f"compared {mine} against {compared} other open lane(s)"
+
+
 def land(branch: str) -> int:
     """Land, and on failure fetch, rebase and try ONCE more — branch_policy/push_conflict_rule.
 
@@ -260,6 +307,14 @@ def land(branch: str) -> int:
     none is open, arming auto-merge — so repeating the whole sequence is safe, and the rule's own
     `escalate_after: one failed retry` is the bound: a second failure is two writers, not a race.
     """
+    # NOBODY ELSE MAY BE SHIPPING THIS NUMBER (3.38.0). Checked BEFORE the push, because after it the
+    # collision is already on the remote.
+    claims, coverage = version_claim_errors(branch)
+    print(f"version claim: {coverage}")
+    for claim in claims:
+        print(f"- {claim}")
+    if claims:
+        return 4
     first = _land_once(branch)
     if first == 0:
         return 0
@@ -291,7 +346,7 @@ def sync() -> int:
     Worktrees are REPORTED, never removed: one may be a live session's checkout.
     """
     base = str((atlas().get("branch_policy") or {}).get("default_base") or "main")
-    subprocess.run(["git", "fetch", "--prune", "origin"], cwd=ROOT, capture_output=True, check=False, timeout=600)
+    subprocess.run(["git", "fetch", "--prune", "origin"], cwd=worktree(), capture_output=True, check=False, timeout=600)
     lines = _git("worktree", "list", "--porcelain").split("\n")
     trees = [(lines[i].split(" ", 1)[1], lines[j].split("refs/heads/", 1)[1])
              for i, line in enumerate(lines) if line.startswith("worktree ")
@@ -318,7 +373,7 @@ def sync() -> int:
         steps = [["git", "tag", "-a", wanted, f"origin/{base}", "-m", f"contract {wanted}"],
                  ["git", "push", "origin", wanted]]
         for step in steps:
-            done = subprocess.run(step, cwd=ROOT, capture_output=True, text=True, check=False, timeout=600)
+            done = subprocess.run(step, cwd=worktree(), capture_output=True, text=True, check=False, timeout=600)
             print(f"  {'ok ' if done.returncode == 0 else 'FAIL'} {' '.join(step[:3])}")
             if done.returncode != 0:
                 print(f"  release not tagged: {(done.stderr or done.stdout).strip()[:200]}")
@@ -334,7 +389,7 @@ def sync() -> int:
         if branch in live:
             print(f"  keep {branch}: its upstream is gone but a worktree has it checked out")
             continue
-        done = subprocess.run(["git", "branch", "-d", branch], cwd=ROOT,
+        done = subprocess.run(["git", "branch", "-d", branch], cwd=worktree(),
                               capture_output=True, text=True, check=False, timeout=600)
         if done.returncode == 0:
             print(f"  ok  {branch}")
@@ -343,7 +398,7 @@ def sync() -> int:
         # and --sync kept it forever, printing "holds work not in the default branch" about work that WAS in it.
         # `git cherry` compares PATCHES, not ancestry: every line '-' means the base already carries that change.
         if merged_by_patch(branch, base_ref):
-            subprocess.run(["git", "branch", "-D", branch], cwd=ROOT, capture_output=True, timeout=600, check=False)
+            subprocess.run(["git", "branch", "-D", branch], cwd=worktree(), capture_output=True, timeout=600, check=False)
             print(f"  ok  {branch} — squash-merged: every patch it holds is already in {base_ref}")
         else:
             print(f"  keep {branch} — holds work not in the default branch")
@@ -352,12 +407,12 @@ def sync() -> int:
     if shutil.which("gh"):
         listed = subprocess.run(["gh", "pr", "list", "--state", "open", "--json",
                                  "number,headRefName,isCrossRepository,autoMergeRequest,isDraft"],
-                                cwd=ROOT, capture_output=True, text=True, check=False, timeout=600)
+                                cwd=worktree(), capture_output=True, text=True, check=False, timeout=600)
         for pr in json.loads(listed.stdout or "[]") if listed.returncode == 0 else []:
             if pr.get("autoMergeRequest") or pr.get("isCrossRepository") or pr.get("isDraft"):
                 continue  # armed already; a fork's request is a maintainer's call; a draft is unfinished
             done = subprocess.run(["gh", "pr", "merge", str(pr["number"]), "--auto", "--rebase"],
-                                  cwd=ROOT, capture_output=True, text=True, check=False, timeout=600)
+                                  cwd=worktree(), capture_output=True, text=True, check=False, timeout=600)
             print(f"  {'ok ' if done.returncode == 0 else 'FAIL'} armed stranded pull request "
                   f"#{pr['number']} ({pr['headRefName']})")
     hooks = _git("config", "--get", "core.hooksPath")

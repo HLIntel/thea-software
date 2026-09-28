@@ -132,6 +132,19 @@ def build_parser() -> tuple[argparse.ArgumentParser, argparse._SubParsersAction]
     role_parser = sub.add_parser("role", help="what an agent in a role may do, hands back, and when it ends")
     role_parser.add_argument("name", nargs="?", default=None, help="a key of atlas.yaml/agent_roles")
     role_parser.add_argument("--json", action="store_true", help="emit the role as JSON")
+    # THE LANDING TOOLS, REACHABLE FROM ANY REPOSITORY (3.35.0). The install ships one module and reads
+    # its policy from the atlas, so an agent that plugs Thea in gets these three against ITS OWN tree:
+    # `worktree()` decides the target from the working directory, never from where the atlas happens to
+    # live. Before this they existed only as `python scripts/branchstate.py` inside this checkout.
+    branches_parser = sub.add_parser("branches", help="what each branch of THIS repository holds, and whether it is finished")
+    branches_parser.add_argument("--json", action="store_true", help="emit the per-branch state as JSON")
+    land_parser = sub.add_parser("land", help="pull, rebase, push, open the pull request and arm auto-merge for this repository")
+    land_parser.add_argument("--json", action="store_true", help="emit the landing verdict as JSON")
+    sync_parser = sub.add_parser("sync", help="pull the default branch and clear lanes that have finished")
+    sync_parser.add_argument("--json", action="store_true", help="emit what was cleared as JSON")
+    id_parser = sub.add_parser("id", help="what a declared name IS: every namespace that declares it, its line, its enforcer")
+    id_parser.add_argument("name", help="any name declared anywhere in atlas.yaml")
+    id_parser.add_argument("--json", action="store_true", help="emit the resolution as JSON")
     resume_parser = sub.add_parser("resume", help="where interrupted work stands, and the one next action")
     resume_parser.add_argument("--json", action="store_true", help="emit the state as JSON")
     steps_parser = sub.add_parser("steps", help="the ordered implementation plan for one runtime, to its return point")

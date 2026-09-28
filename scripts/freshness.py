@@ -78,6 +78,29 @@ def survey() -> list[dict]:
     return sorted(rows, key=lambda r: (r["minors_behind"] is None, -(r["minors_behind"] or 0)))
 
 
+def history_is_visible() -> str:
+    """"" when git history is readable here, else WHY this check cannot run.
+
+    THE DEFECT THIS CLOSES (3.37.0). `actions/checkout` fetches ONE commit by default, and every reading
+    here comes from `git log -1 -- <path>`. On a shallow clone every path appears to have been touched at
+    HEAD, so nothing is behind, so there are no findings — and CI printed a clean pass over 13 real ones,
+    some 36 minor versions old. A check whose input is missing must REFUSE; a clean pass it did not earn
+    is worse than a crash, because nobody looks again.
+    """
+    shallow = subprocess.run(["git", "rev-parse", "--is-shallow-repository"], cwd=ROOT,  # noqa: S607
+                             capture_output=True, text=True, check=False, timeout=600).stdout.strip()
+    if shallow == "true":
+        return ("this is a SHALLOW clone, so `git log` sees one commit and every path reads as touched at "
+                "HEAD. Fetch history (actions/checkout with fetch-depth: 0) — a clean pass from here "
+                "would be a pass this check did not earn")
+    tags = subprocess.run(["git", "tag", "--list"], cwd=ROOT, capture_output=True,  # noqa: S607
+                          text=True, check=False, timeout=600).stdout.split()
+    if not tags:
+        return ("no tags are present, so a contract version cannot be resolved for any path. Fetch tags "
+                "(fetch-depth: 0 fetches them) rather than reporting every path as current")
+    return ""
+
+
 def freshness_errors() -> list[str]:
     """A path past the horizon must be looked at, or exempted WITH a reason.
 
@@ -111,6 +134,10 @@ def freshness_errors() -> list[str]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    blind = history_is_visible()
+    if blind:
+        print(f"NOT RUN: {blind}")
+        return 2                       # 2, not 1: it did not find a problem, it could not look
     rows = survey()
     cap = int(horizon().get("max_minors_behind") or 0)
     print(f"contract {read('VERSION').strip()} — how far behind each path was last touched, "
@@ -122,6 +149,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {mark} {row['path']:<22} contract {row['contract']:<9} {behind:>3} behind  "
               f"{row['subject']}")
     problems = freshness_errors()
+    print(f"COVERAGE: {len(rows)} path(s) surveyed against a horizon of {cap} minor version(s); "
+          f"{sum(1 for r in rows if r['exempt'])} exempt with a stated reason. A shallow clone cannot "
+          f"answer this and says NOT RUN instead of passing.")
     for problem in problems:
         print(f"- {problem}")
     print("SCOPE: versions, not days, and it does not prove a stale path is WRONG. Some paths")

@@ -1,4 +1,4 @@
-version: 3.35.0
+version: 3.36.0
 
 # WHO OWNS THIS TREE, DECLARED ONCE SO A RENAME IS ONE LINE RATHER THAN A SWEEP.
 #
@@ -209,6 +209,110 @@ enforcement:
       refuses the fixture for being the fixture, and a guard that fires on correct content gets
       switched off'
 
+# WHAT AN ACTION CAN DO, DECLARED ONCE (3.38.0). A task contract named BINARIES, and a binary is not a
+# capability: `allowed_commands: [git]` grants reading, writing and PUBLISHING in one word, and the
+# example contract shipped exactly that. denied_commands catches a few shapes by pattern; nothing said
+# what a permitted command is permitted TO DO.
+#
+# The lattice is small on purpose. Each effect is a thing a reviewer can decide about, not an
+# implementation detail — "it writes the repository" is reviewable, "it opens a file descriptor" is not.
+#
+# FAIL CLOSED, INSIDE AN OPT-IN. A contract that declares `allowed_effects` refuses any command shape
+# with no row here, because the safe answer for an unknown capability is no. A contract that does not
+# declare it is bounded by allowed_commands exactly as before — stated here rather than left as a silent
+# default, because a default nobody wrote down is the assumption that caused half of this session's bugs.
+effects:
+  read_repository: 'reads tracked files in the worktree and nothing else'
+  write_repository: 'changes tracked files, the index, or git history in the worktree'
+  publish: 'makes a change visible outside this machine, where undoing it needs somebody else'
+  execute_authored_code: 'runs code from THIS tree, whose content the gates already judge'
+  execute_foreign_code: 'runs code the task did not author and no gate here has read'
+  read_credential: 'reads a secret, token or key'
+  network: 'reaches a host outside this machine'
+
+# A COMMAND SHAPE AND WHAT IT DOES. Keyed by binary, or by binary and its verb where the verb is what
+# decides — `git status` and `git push` are not the same capability wearing one name. The longest
+# matching key wins, so a verb row overrides its binary row rather than duplicating it.
+tool_effects:
+  git: [read_repository]
+  'git add': [write_repository]
+  'git commit': [write_repository]
+  'git checkout': [write_repository]
+  'git rebase': [write_repository]
+  'git merge': [write_repository]
+  'git tag': [write_repository]
+  'git push': [write_repository, publish]
+  'git fetch': [network]
+  'git pull': [write_repository, network]
+  'git clone': [write_repository, network]
+  # THE SAME BINARIES argument_paths ALREADY NAMES. Two rosters keyed by the same subject must agree, or
+  # one is silently short — found the hard way: the example contract began bounding effects and `sort`,
+  # which argument_paths has declared since 3.29.0, had no row here, so a correct command was refused.
+  # A flag can be the verb that decides: `sort` reads and `sort -o` writes.
+  sort: [read_repository]
+  'sort -o': [write_repository]
+  openssl: [read_repository]
+  tee: [write_repository]
+  truncate: [write_repository]
+  awk: [read_repository]
+  ruff: [read_repository]
+  'ruff format': [write_repository]
+  pytest: [read_repository, execute_authored_code]
+  python3: [read_repository, execute_authored_code]
+  python: [read_repository, execute_authored_code]
+  gh: [network, publish]
+  curl: [network, read_credential]
+  wget: [network]
+  cat: [read_repository]
+  ls: [read_repository]
+  grep: [read_repository]
+  find: [read_repository]
+  sed: [read_repository]
+  make: [read_repository, execute_foreign_code]
+  npm: [network, execute_foreign_code, write_repository]
+  pip: [network, execute_foreign_code, write_repository]
+  docker: [execute_foreign_code, network]
+
+# WHAT THE READ-ONLY MCP ROUTE MAY EXPOSE (3.35.0). The tool list is DERIVED from the CLI's own
+# subparsers, which is right — a second copy would narrow the day a verb was added beside it. But every
+# tool is annotated readOnlyHint, and the moment `land` and `sync` were added to the CLI they appeared
+# here as read-only tools that PUSH. An annotation that is not the identity is the shape this tree
+# refuses everywhere else, so the route is classified rather than assumed.
+#
+# FAIL CLOSED, BY CONSTRUCTION: a command that appears in neither list fails the build, so a new verb
+# is never exposed by default. `thea_edit.py` is the contract-bound route for anything that writes.
+command_effects:
+  writes:
+    do: 'runs a declared process, which may execute the pack''s own commands'
+    index: rewrites every generated document in the tree
+    land: 'pushes, tags and opens a pull request in the caller''s repository'
+    learn: writes the mastery store
+    sync: pulls the default branch and deletes local branches that have finished
+  reads:
+  - commands
+  - check
+  - verify
+  - invariants
+  - doctor
+  - process
+  - index-search
+  - pick
+  - decide
+  - intake
+  - shell
+  - delegate
+  - cadence
+  - role
+  - branches
+  - resume
+  - id
+  - steps
+  - failures
+  - why
+  - gate
+  - route
+  - plan
+
 instrument_roster:
   # AN INSTRUMENT NO GATE AND NO INVARIANT REACHES (3.31.0). Four were measured here by taking the
   # transitive import closure of verification_policy/done_set plus every script named in a workflow.
@@ -309,6 +413,15 @@ instruments:
     does_not_prove: anything the other two suites already claim; it is those suites, split because a
       line cap is never raised to fit new code
     closed_by: atlas_test.py, which runs it inside its own counted main and asserts the total
+  'resolve.py':
+    script: scripts/resolve.py
+    proves: any declared name resolves to every namespace that declares it, with the line it is declared
+      on and the function that enforces it, so a reader never has to read this declaration breadth-first
+      to find out what a name is
+    does_not_prove: that the thing named is correct, reachable or current — verify, the instrument roster
+      and the freshness report answer those; nor anything about a name that is not declared here
+    closed_by: the reader, who judges the thing once this points at it; and the planted case that refuses
+      a namespace the resolver cannot see
   'roster.py':
     script: scripts/roster.py
     proves: every script under scripts/ is a declared instrument or a declared non-script with its
@@ -620,6 +733,14 @@ instruments:
       — the prompt is part of the experiment, so a result is a SAMPLE and never an edge
     closed_by: 're-running it per model and per phrasing, and `bench.py` for the part that needs
       no model at all'
+  'effects.py':
+    script: scripts/effects.py
+    proves: a command permitted by name is still bounded by what its shape is declared to DO, and a
+      contract that bounds effects refuses a shape no row declares rather than assuming it is harmless
+    does_not_prove: that a command whose effects are allowed is CORRECT, that an agent asks at all, or
+      anything about a capability no row names — which is why an opted-in contract refuses that case
+    closed_by: the planted cases for both halves, and the guard that keeps the lattice closed in both
+      directions and its roster joined to argument_paths
   'enforce.py':
     script: scripts/enforce.py
     proves: a file an agent is about to commit parses and type-checks under its own toolchain's check-only
@@ -898,34 +1019,17 @@ routing_policy:
     risk_prefix: 'risk/'
     status_prefix: 'status/'
 
-# AN AGENT HOLDS MORE THAN ONE SEAT, and orchestrating is not a bigger version of working.
-# `agent_roles/orchestrator` may split work into lanes and land them, and may NOT edit inside a lane it
-# handed off; `implementer` may edit the declared paths and may not widen scope. Same agent, opposite
-# permissions — so an agent that appears once in this map is routed by its strongest capability and
-# then does the other job under the wrong contract.
-# MEASURED 3.32.0: `tool_orchestration` named ONE agent whose daemon is retired on purpose, while the
-# agent that carries subagent dispatch, a workflow runner and a task tool was absent from the route
-# entirely and present twice as a worker. A route to a stopped daemon reads the same as a route to a
-# capable one — the roster claimed a capability the running process does not have.
 model_routes:
   architecture: [claude, openai_codex]
   interactive_edit: [cursor, vscode]
   deterministic_repo_edit: [openai_codex, opencode]
   terminal_parallelism: [opencode]
-  tool_orchestration: [claude, hermes]   # claude FIRST: hermes' daemon is retired; claude dispatches subagents and returns typed results
+  tool_orchestration: [hermes]
   research: [chat, generic_llm, claude]
   ideation: [chat]
   verification: [native_toolchain, github_actions]
 
 context_policy:
-  # An MCP tool SCHEMA is a per-turn tax, like a skill description — handed over on every request by any
-  # client without deferred tool loading. MEASURED at contract 3.34.0 across six servers: 30,853 tokens on one
-  # agent, of which a machine-maintenance server was 11,569 and a web-scraper 10,670, on a CODING agent
-  # that called neither. 5,000 passes the three a coding agent actually needs (an engineering contract
-  # 2,784 · local version control 1,588 · a remote forge 4,242) and refuses the two that were pure
-  # overhead. A RATCHET: it may fall and never rise, and raising it must name what was added and why it
-  # must be handed over on every request rather than reached on demand.
-  mcp_server_tokens: 5000
   default: [model, index, atlas, target_language, operating_card, tool_manifest, task_profile]
   boundary_addons: [api, db, cache, queue, abi, ffi, cloud]
   forbidden_default: [whole_repo_dump, unrelated_language_packs, duplicate_tool_queries]
@@ -992,12 +1096,37 @@ context_policy:
     # resets its clock without touching the file, so nobody has to fake an edit to clear a
     # warning. A reviewed entry ages exactly like a commit does: past the horizon it asks again.
     reviewed:
+      # REVIEWED MECHANICALLY at 3.37.0, and the method is the point: every backticked identifier the
+      # three prose areas name was resolved against the declaration with `thea id`. 57 were named; the
+      # 14 that do not resolve are field names, function names, module names and operating-system
+      # tools, which are correct things for prose to name. Every DECLARED concept they mention exists.
+      # An eyeball pass cannot be repeated by the next reader; this one can, and it found three
+      # defects in the resolver rather than in the documents.
+      patterns: '3.37.0'
+      systems: '3.37.0'
+      research: '3.37.0'
+      # EXAMINED at 3.37.0, not exempted: devcontainer.json pins a current Python, installs from the
+      # hash-pinned lock and runs `check` on create; .zed/tasks.json is thin wrappers over commands
+      # that run without Zed, which host_is_not_a_capability already refuses to let drift.
+      .devcontainer: '3.37.0'
+      .zed: '3.37.0'
       .gitattributes: '2.27.0'
       prompts: '2.27.0'
       .editorconfig: '2.26.0'
-      .gitignore: '2.26.0'
-      .devcontainer: '2.26.0'
     exempt:
+      # EACH REASON NAMES WHAT WATCHES THE PATH INSTEAD OF CHURN (3.37.0). An exemption reading
+      # 'it is fine' is a snooze button; naming the instrument that holds the path keeps the
+      # horizon refusing the silent case it exists for. patterns/, systems/ and research/ are
+      # deliberately NOT here: nobody has read them this version, and saying otherwise would be
+      # the fabricated review this third state was added to make unnecessary.
+      CLAUDE.md: 'a single import of AGENTS.md; editing it is the defect, because a per-runtime copy is what one body for every runtime exists to prevent'
+      config: 'the declared GitHub controls, compared against the LIVE platform by ghaudit on every run — churn is not its signal, a difference from the platform is'
+      .gitignore: 'the runtime-store list, held by leaks, which fails the build the moment a runtime store becomes tracked'
+      CITATION.cff: 'citation metadata, which changes on authorship and never on the contract'
+      benchmarks: 'recorded runs, held by benchmark_floors which only ever fall; rewriting a record because the version moved would fabricate a measurement nobody took'
+      pyproject.toml: 'packaging, held by the dependency closure and the install-footprint ratchet rather than by how often it is edited'
+      wiki: 'reference prose whose required pages are asserted BY NAME in atlascore, so a deletion fails even in a version where nobody edits it'
+      skills: 'the shipped skill, held by skill_description_bytes — a per-turn cost paid by every session that installs it, which binds tighter than review frequency'
       LICENSE: a copyright record, not a document that tracks the contract
       examples: an example changes when its LANGUAGE does, which is not on this repository's clock
       languages: 35 packs move with their own toolchains; packprobe and provenance.verify are what
@@ -1075,6 +1204,11 @@ verification_policy:
   # THE RUNG THEA SHIPS TO OTHER REPOSITORIES, finally run on this one (3.32.0). `--tracked` and
   # not a bare `check`: with no argument it swept zero files and exited 0, which is the vacuous
   # pass this repository refuses everywhere else.
+  # THE HORIZON BECOMES A GATE (3.37.0). It exited 1 on 13 findings for many versions while sitting
+  # in no gate, and CI ran it over a SHALLOW clone where every path reads as touched at HEAD — so
+  # it printed a clean pass over all 13. It now says NOT RUN rather than passing when it cannot see
+  # history, and a verdict nobody gates on is a report wearing a rule's language.
+  - {id: review_horizon, argv: [python, scripts/freshness.py], mutates: false, machine_dependent: false}
   - {id: own_enforcement, argv: [python, scripts/enforce.py, check, --tracked], mutates: false,
      machine_dependent: true,
      why_machine_dependent: 'it runs each pack''s check-only compiler, so a machine without one
@@ -1420,26 +1554,6 @@ governance_tiers:
 # The sightings count is the point. One is a bug; two is a missing rule and writing that rule is
 # part of the fix; three means the evidence was there twice and nothing was done.
 agent_failure_modes:
-  a_working_directory_snapshotted_on_every_turn:
-    enforced_by: [agentpolicy.dispatch_cwd]
-    shape: an agent snapshots or indexes its working directory once per turn, so the SIZE OF THE cwd
-      becomes a per-turn cost — and the cost is charged to the model's apparent latency, where nothing
-      about the prompt, the token count or the tool roster predicts it
-    looks_like: a slow agent that still answers correctly; a status of BROKEN on a binary that works
-    tell: turn time is flat across wildly different context sizes, and the agent's own log names the
-      directory — halving the context made the turn SLOWER, while the bare model served 31k tokens in 2.2s
-    sightings: 1
-    prevented_by: refuse a tree-sized cwd at dispatch (home, a filesystem root, a temp root) and pass a
-      project directory; measure one prompt across several cwds before blaming the model or the tokens
-  a_fault_that_fails_fast_masking_a_slower_correct_path:
-    enforced_by: [agentpolicy.dispatch_cwd]
-    shape: a broken artefact makes an expensive operation abort early, so the system is FASTER while
-      faulty; repairing the artefact restores the full cost and the fix reads as a regression
-    looks_like: a correct cleanup that made things measurably worse, and a temptation to revert it
-    tell: removing a stale lock, cache or marker increased the time it was supposed to reduce
-    sightings: 1
-    prevented_by: after removing a mask, RE-MEASURE — a mask hides a cost rather than removing it, so
-      the number to fix is the one the mask was hiding, not the mask
   a_commit_hash_read_as_the_content_it_carries:
     enforced_by: [staleness.lane_verdict]
     shape: a lane is judged merged by whether its commit HASHES reach the base, and a squash merge lands
@@ -1629,12 +1743,12 @@ agent_failure_modes:
     sightings: 4
     prevented_by: parse-first in atlas.check, and each guard catching and continuing
   an_instrument_wrong_in_its_scope:
-    tell: 'every sum is correct, but it was computed over the wrong set of items — and the set it MISSED is often the larger one: a per-turn cost counter that measured FILES on the entry path while tool schemas arriving over a protocol at runtime, 30,855 tokens of them, sat outside its window entirely'
+    tell: 'every sum is correct, but it was computed over the wrong set of items'
     enforced_by: [atlas.declaration_errors]
     shape: correct arithmetic over the wrong set — summing three conventions no runtime loads
       together, counting instruments no consumer installs
     looks_like: a precise number, which is why it is believed
-    sightings: 3
+    sightings: 2
     prevented_by: every instrument declaring what it does NOT measure, and a closer that disagrees
   a_blanket_rule_over_unlike_things:
     tell: 'after the fix, files that were fine before start failing, because the rule matched a suffix or folder whose members are not alike'
@@ -1874,15 +1988,6 @@ agent_failure_modes:
     prevented_by: branch_policy/landed_states, which separates committed, pushed, merged and
       published, and branchstate.py, which reads them back rather than assuming them
 
-  a_probe_that_reports_absent_what_it_could_not_reach:
-    unenforceable: true
-    shape: 'a probe reports a live thing ABSENT because of how the probe itself was invoked, never because the thing is missing — an exact-line match flag against an embedded blob, a closed or redirected stdin against a server that needs a pipe, a token budget too small for the model to emit anything, a subcommand omitted so the tool prints usage instead of data, or a clobbered PATH so the checker never ran at all'
-    looks_like: 'a confident negative, and a decision to repair what already works'
-    tell: 'THE ERRORS ARE ALL IN ONE DIRECTION — every miscall is a false ABSENT, never a false PRESENT. Nine instances in one session: a negative arriving faster than the work could take, a zero count from a tool that also printed usage, a different client returning the opposite answer to the same request, and an interpreter missing a stdlib module so the checker never ran'
-    prevented_by: 'probe with the client the caller will actually use, and re-probe any negative with a second client before recording it; prefer the subject''s own declared self-check to a hand-rolled one; state the exact invocation beside every negative verdict so the reader can see what was and was not reached'
-    closed_by: 'a review rule: a recorded negative must name the client and the exact invocation that produced it, and a second independent probe must agree before the verdict enters a roster'
-    sightings: 1
-    intake: 3.34.0
 # A READING SERVED FROM A CACHE IS NOT A MEASUREMENT OF NOW.
 #
 # Two of these bit in a single session, and both LOOKED like a failed change rather than a stale

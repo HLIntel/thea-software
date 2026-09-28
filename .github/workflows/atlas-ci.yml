@@ -24,6 +24,12 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # FULL HISTORY AND TAGS, because two checks read them (3.37.0). The default fetches ONE
+          # commit, so `git log -1 -- <path>` reported every path as touched at HEAD and the freshness
+          # check printed a clean pass over 13 real findings, one of them 36 minor versions old. It now
+          # says NOT RUN on a shallow clone rather than passing, and this makes it able to run at all.
+          fetch-depth: 0
 
       - name: Check repository surface
         run: |

@@ -240,6 +240,12 @@ def argument_verdict(contract: dict, argv: list[str]) -> Verdict | None:
     return None
 
 
+
+
+
+
+
+
 def command_verdict(contract: dict, argv: list[str]) -> Verdict:
     """The narrow-tools control: the declared floor first, the contract's allowance second."""
     if not argv or not all(isinstance(a, str) for a in argv):
@@ -255,6 +261,12 @@ def command_verdict(contract: dict, argv: list[str]) -> Verdict:
     by_argument = argument_verdict(contract, argv)
     if by_argument is not None:
         return by_argument
+    # WHAT IT DOES, not only where it writes: a binary the contract named is still bounded by the
+    # effects that binary's shape declares.
+    from effects import effect_verdict  # noqa: PLC0415 — deferred: effects imports Verdict from here
+    by_effect = effect_verdict(contract, argv)
+    if by_effect is not None and not by_effect.allowed:
+        return by_effect
     return Verdict(True, "narrow_tools", f"{binary!r} is allowed, matches no denial, and every path "
                                          f"it carries is inside the contract")
 

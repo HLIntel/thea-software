@@ -103,8 +103,25 @@ def _mcp_problems() -> list[str]:
     parser, _ = _commands.build_parser()
     sub = next(a for a in parser._actions if a.__class__.__name__ == "_SubParsersAction")  # noqa: SLF001
     listed = replies.get(2, {}).get("result", {}).get("tools", [])
-    if sorted(t["name"] for t in listed) != sorted(sub.choices):
-        problems.append("tools/list is not the CLI's own command list")
+    # DERIVED FROM THE CLI AND FILTERED BY DECLARED EFFECT (3.35.0). This asserted EQUALITY, which was
+    # right while every command only read: a hand-written second list would narrow the day a verb was
+    # added beside it. It stopped being right the moment `land` and `sync` joined the CLI, because every
+    # tool here is annotated readOnlyHint and those two PUSH. So the property is now a strict subset:
+    # nothing may appear that the CLI does not define (still no hand-written list), and nothing may
+    # appear that command_effects classifies as writing.
+    names = {t["name"] for t in listed}
+    from atlascore import atlas as _atlas  # noqa: PLC0415
+    effects = _atlas().get("command_effects") or {}
+    invented = names - set(sub.choices)
+    writing = names & set(effects.get("writes") or {})
+    if invented:
+        problems.append(f"tools/list names {sorted(invented)}, which the CLI does not define — a "
+                        "hand-written tool list, which narrows the day a command is added beside it")
+    if writing:
+        problems.append(f"tools/list exposes {sorted(writing)}, which WRITES, on a route that annotates "
+                        "every tool readOnlyHint")
+    if names != set(effects.get("reads") or []):
+        problems.append("tools/list is not exactly the commands declared as readers in command_effects")
     for tool in listed:
         if (tool.get("annotations") or {}).get("readOnlyHint") is not True:
             problems.append(f"tool '{tool['name']}' does not declare readOnlyHint")

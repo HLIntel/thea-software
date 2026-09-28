@@ -243,6 +243,110 @@ def machine_dependence_errors() -> list[str]:
     return errors
 
 
+def effect_errors() -> list[str]:
+    """The effect lattice is closed, every row is decided, and the reference contract obeys its own rules.
+
+    WHY (3.38.0). A task contract named BINARIES, and a binary is not a capability — the shipped
+    reference contract allowed `git`, which reads, writes and PUBLISHES in one word. The lattice only
+    means something if it is closed in both directions: an effect nothing uses is dead vocabulary that
+    reads as coverage, and a row naming an effect the lattice does not declare is a typo that silently
+    permits nothing.
+    """
+    import json  # noqa: PLC0415
+
+    errors: list[str] = []
+    declared = dict(atlas().get("effects") or {})
+    rows = dict(atlas().get("tool_effects") or {})
+    if not declared or not rows:
+        return ["atlas.yaml must declare both effects and tool_effects; a lattice with no rows, or rows "
+                "with no lattice, bounds nothing while reading as a capability system"]
+    for name, why in sorted(declared.items()):
+        if not str(why or "").strip():
+            errors.append(f"effects/{name} states nothing about what it means — an effect a reviewer "
+                          f"cannot decide about is not a capability, it is a word")
+    used = {str(e) for row in rows.values() for e in (row or [])}
+    for name in sorted(used - set(declared)):
+        errors.append(f"tool_effects names effect {name!r}, which effects does not declare — a typo here "
+                      f"permits nothing and reads like a bound")
+    for name in sorted(set(declared) - used):
+        errors.append(f"effects/{name} is declared and used by no tool_effects row — dead vocabulary that "
+                      f"reads as coverage; wire it or delete it")
+    for key, row in sorted(rows.items()):
+        if not row:
+            errors.append(f"tool_effects/{key} declares an EMPTY effect list, which reads as harmless and "
+                          f"was never decided")
+    # TWO ROSTERS KEYED BY THE SAME SUBJECT MUST AGREE. argument_paths declares what a binary WRITES
+    # THROUGH; tool_effects declares what it DOES. A binary in one and not the other is the silent join
+    # this repository refuses elsewhere — and it bit immediately: `sort` was in argument_paths from
+    # 3.29.0 and had no effect row, so a correct command was refused the moment effects were bounded.
+    paths = (atlas().get("agent_policy") or {}).get("argument_paths") or {}
+    named = (set(paths.get("output_flags") or {}) | set(paths.get("writes_arguments") or [])
+             | set(paths.get("refused_flags") or {}))
+    for binary in sorted(named):
+        if not any(key == binary or key.startswith(f"{binary} ") for key in rows):
+            errors.append(f"agent_policy/argument_paths names {binary!r} and tool_effects does not — the "
+                          f"two rosters are keyed by the same subject, so one being short is invisible "
+                          f"until a contract bounds effects and refuses a correct command")
+    # THE REFERENCE CONTRACT MUST OBEY THE RULE IT DEMONSTRATES, or it is an example of the wrong thing.
+    reference = str(((atlas().get("agent_policy") or {}).get("reference_contract")) or "")
+    if reference and (ROOT / reference).exists():
+        contract = json.loads((ROOT / reference).read_text(encoding="utf-8"))
+        effects_allowed = contract.get("allowed_effects")
+        if effects_allowed is None:
+            errors.append(f"{reference} declares no allowed_effects, so the mechanism ships unexercised — "
+                          f"an arm that is built and wired to nothing reads as covered")
+        else:
+            for name in sorted({str(e) for e in effects_allowed} - set(declared)):
+                errors.append(f"{reference} allows effect {name!r}, which effects does not declare")
+            for binary in sorted(contract.get("allowed_commands") or []):
+                if not any(key == binary or key.startswith(f"{binary} ") for key in rows):
+                    errors.append(f"{reference} allows command {binary!r} with no tool_effects row, so the "
+                                  f"contract it demonstrates would refuse its own command")
+    return errors
+
+
+def command_effect_errors() -> list[str]:
+    """Every `thea` subcommand is classified as reading or writing, and the read-only route exposes
+    only readers.
+
+    WHY (3.35.0). The MCP tool list is derived from the CLI's subparsers and every tool is annotated
+    readOnlyHint. When `land` and `sync` were added to the CLI they appeared on the read-only route
+    immediately, as read-only tools that push, tag and open pull requests. An annotation that is not the
+    identity is the shape this repository refuses everywhere else.
+
+    IT FAILS CLOSED. A command in neither list is an ERROR rather than a default, because the safe
+    default for a route that publishes tools to agents is to publish nothing it has not been told about.
+    """
+    import thea_mcp  # noqa: PLC0415
+    effects = atlas().get("command_effects") or {}
+    writers, readers = set(effects.get("writes") or {}), set(effects.get("reads") or [])
+    declared = writers | readers
+    errors: list[str] = []
+    if not writers or not readers:
+        return ["command_effects must name both writes and reads; a table with one side empty "
+                "classifies nothing and the read-only route would expose everything or nothing"]
+    overlap = writers & readers
+    if overlap:
+        errors.append(f"command_effects classifies {sorted(overlap)} as BOTH reading and writing")
+    known = set(thea_mcp._subparsers())  # noqa: SLF001
+    for name in sorted(known - declared):
+        errors.append(f"`thea {name}` is classified in neither command_effects/writes nor /reads. It is "
+                      f"therefore NOT exposed by the read-only MCP route, which is the safe default — "
+                      f"declare which it is, with the reason if it writes")
+    for name in sorted(declared - known):
+        errors.append(f"command_effects names `{name}`, which is not a `thea` subcommand — a stale row "
+                      f"hides the next command that lands on that name")
+    for name, why in sorted((effects.get("writes") or {}).items()):
+        if not str(why or "").strip():
+            errors.append(f"command_effects/writes/{name} states no reason — a verb that writes must say "
+                          f"what it writes, or a reader cannot judge the route it belongs on")
+    exposed = {tool["name"] for tool in thea_mcp.tools()}
+    for name in sorted(exposed & writers):
+        errors.append(f"the read-only MCP route exposes `{name}`, which WRITES, annotated readOnlyHint — "
+                      f"an annotation that is a rendering and not the identity")
+    return errors
+
+
 def hook_parity_errors() -> list[str]:
     """What the commit hook enforces, verify and CI must enforce too — a hook-only gate is a local habit."""
     hook = (ROOT / ".githooks" / "pre-commit").read_text(encoding="utf-8") if (ROOT / ".githooks" / "pre-commit").is_file() else ""
@@ -331,6 +435,6 @@ def process_return_errors() -> list[str]:
 
 
 def declaration_errors() -> list[str]:
-    return machine_dependence_errors() + input_declaration_errors() + delegation_errors() + cadence_errors() + role_errors() + process_return_errors() + guide_reference_errors() + number_drift_errors() + \
+    return effect_errors() + command_effect_errors() + machine_dependence_errors() + input_declaration_errors() + delegation_errors() + cadence_errors() + role_errors() + process_return_errors() + guide_reference_errors() + number_drift_errors() + \
         decision_evidence_errors() + hook_parity_errors() + (issue_route_errors() + model_route_errors() + front_end_errors() + drift_review_errors()
             + prose_reference_errors() + landed_state_errors())

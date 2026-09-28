@@ -487,6 +487,54 @@ def resume(as_json: bool) -> int:
     return 0
 
 
+def land_here(verb: str, as_json: bool) -> int:
+    """`thea land` / `thea sync` — against the repository the caller is IN, never against the atlas.
+
+    WHY THE REFUSAL (3.35.0). Thea is ADDED to an agent's layer; it does not own the agent's work. An
+    agent that plugs the atlas in reads its rules from it and pushes to ITS OWN repository, so landing
+    the atlas is not a thing a consumer may do by accident — and before this every git command in the
+    landing tool ran against the atlas root, which is precisely that accident.
+
+    The atlas is refused BY IDENTITY, not by name: the target is compared to the resolved atlas root, so
+    a rename, a symlink or a vendored copy cannot walk past it. Thea's own lanes still land, through
+    `python scripts/branchstate.py --land` inside its checkout, which is where that authority belongs.
+
+    AND THE DIFF IS VERIFIED FIRST, with the one rung that is portable. The atlas's own gates judge the
+    atlas — a contract check over somebody else's tree would be a confident wrong answer. `enforce` is
+    the rung that travels: it runs each changed file under its OWN language's check-only command, so it
+    means the same thing in a Go repository as in a Python one.
+    """
+    import branchstate  # noqa: PLC0415
+    import enforce  # noqa: PLC0415
+    from atlascore import ROOT, worktree  # noqa: PLC0415
+    try:
+        target = worktree()
+    except ValueError as exc:
+        print(str(exc))
+        return 2
+    if target == ROOT.resolve():
+        print(f"REFUSED: {target.name} is the ATLAS you read your rules from, not your work. Thea is "
+              f"added to an agent's layer and never owns its repository, so `thea {verb}` will not push "
+              f"or pull here.\n"
+              f"  - to land YOUR repository: run `thea {verb}` from inside it\n"
+              f"  - to land the atlas itself: `python scripts/branchstate.py --{verb}` in its checkout")
+        return 3
+    changed = enforce.staged() or []
+    if not changed:
+        base = str((__import__("atlascore").atlas().get("branch_policy") or {}).get("default_base") or "main")
+        names = branchstate._git("diff", "--name-only", f"origin/{base}...HEAD").split()
+        changed = [__import__("pathlib").Path(n) for n in names]
+    if changed:
+        print(f"verifying the diff first: {len(changed)} changed file(s) under their own toolchains")
+        if enforce.check(changed) != 0:
+            print("REFUSED: the diff does not pass its own language's check-only command. Nothing was "
+                  "pushed — fix the files above, or `thea shell` the command you meant to run.")
+            return 1
+    else:
+        print("no changed file against the base branch, so there is no diff to verify")
+    return branchstate.main([f"--{verb}", *(["--json"] if as_json else [])])
+
+
 # The knowledge commands, dispatched from one table so atlas.py stays under its cap as they grow.
 COMMANDS = {
     "steps": lambda a: steps(a.path, a.runtime, a.change, a.json, a.tier),
@@ -499,6 +547,14 @@ COMMANDS = {
     "cadence": lambda a: __import__("cadence").main(
         [*(["--minutes", str(a.minutes)] if a.minutes else []), *(["--json"] if a.json else [])]),
     "intake": lambda a: __import__("intake").main([*a.prompt, *(["--json"] if a.json else [])]),
+    # branchstate REPORTS unless asked; `land` and `sync` are the two that write, and each is an
+    # explicit verb rather than a flag on a reporting command, because pushing is outward-facing.
+    # `branches` only REPORTS, so it is safe anywhere, including on the atlas. The two that WRITE go
+    # through land_here, which refuses the atlas by identity and verifies the diff before pushing.
+    "id": lambda a: __import__("resolve").main([a.name, *(["--json"] if a.json else [])]),
+    "branches": lambda a: __import__("branchstate").main([*(["--json"] if a.json else [])]),
+    "land": lambda a: land_here("land", a.json),
+    "sync": lambda a: land_here("sync", a.json),
 }
 
 
