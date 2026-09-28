@@ -243,6 +243,48 @@ def machine_dependence_errors() -> list[str]:
     return errors
 
 
+def command_effect_errors() -> list[str]:
+    """Every `thea` subcommand is classified as reading or writing, and the read-only route exposes
+    only readers.
+
+    WHY (3.35.0). The MCP tool list is derived from the CLI's subparsers and every tool is annotated
+    readOnlyHint. When `land` and `sync` were added to the CLI they appeared on the read-only route
+    immediately, as read-only tools that push, tag and open pull requests. An annotation that is not the
+    identity is the shape this repository refuses everywhere else.
+
+    IT FAILS CLOSED. A command in neither list is an ERROR rather than a default, because the safe
+    default for a route that publishes tools to agents is to publish nothing it has not been told about.
+    """
+    import thea_mcp  # noqa: PLC0415
+    effects = atlas().get("command_effects") or {}
+    writers, readers = set(effects.get("writes") or {}), set(effects.get("reads") or [])
+    declared = writers | readers
+    errors: list[str] = []
+    if not writers or not readers:
+        return ["command_effects must name both writes and reads; a table with one side empty "
+                "classifies nothing and the read-only route would expose everything or nothing"]
+    overlap = writers & readers
+    if overlap:
+        errors.append(f"command_effects classifies {sorted(overlap)} as BOTH reading and writing")
+    known = set(thea_mcp._subparsers())  # noqa: SLF001
+    for name in sorted(known - declared):
+        errors.append(f"`thea {name}` is classified in neither command_effects/writes nor /reads. It is "
+                      f"therefore NOT exposed by the read-only MCP route, which is the safe default — "
+                      f"declare which it is, with the reason if it writes")
+    for name in sorted(declared - known):
+        errors.append(f"command_effects names `{name}`, which is not a `thea` subcommand — a stale row "
+                      f"hides the next command that lands on that name")
+    for name, why in sorted((effects.get("writes") or {}).items()):
+        if not str(why or "").strip():
+            errors.append(f"command_effects/writes/{name} states no reason — a verb that writes must say "
+                          f"what it writes, or a reader cannot judge the route it belongs on")
+    exposed = {tool["name"] for tool in thea_mcp.tools()}
+    for name in sorted(exposed & writers):
+        errors.append(f"the read-only MCP route exposes `{name}`, which WRITES, annotated readOnlyHint — "
+                      f"an annotation that is a rendering and not the identity")
+    return errors
+
+
 def hook_parity_errors() -> list[str]:
     """What the commit hook enforces, verify and CI must enforce too — a hook-only gate is a local habit."""
     hook = (ROOT / ".githooks" / "pre-commit").read_text(encoding="utf-8") if (ROOT / ".githooks" / "pre-commit").is_file() else ""
@@ -331,6 +373,6 @@ def process_return_errors() -> list[str]:
 
 
 def declaration_errors() -> list[str]:
-    return machine_dependence_errors() + input_declaration_errors() + delegation_errors() + cadence_errors() + role_errors() + process_return_errors() + guide_reference_errors() + number_drift_errors() + \
+    return command_effect_errors() + machine_dependence_errors() + input_declaration_errors() + delegation_errors() + cadence_errors() + role_errors() + process_return_errors() + guide_reference_errors() + number_drift_errors() + \
         decision_evidence_errors() + hook_parity_errors() + (issue_route_errors() + model_route_errors() + front_end_errors() + drift_review_errors()
             + prose_reference_errors() + landed_state_errors())

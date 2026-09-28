@@ -283,6 +283,32 @@ def parsed_python(text: str, where: str):
 
 
 @lru_cache(maxsize=1)
+def worktree() -> Path:
+    """The git repository this command ACTS ON, which is not always the atlas it READS.
+
+    WHY (3.35.0). THEA_ROOT already declares that the atlas "is not the checkout it was run from", and
+    nothing implemented the other half: every git command in branchstate ran with `cwd=ROOT`. An agent
+    that installed the CLI and ran a landing from ITS repository would have pushed, tagged and opened a
+    pull request against THIS repository instead of its own. The install ships one module and points at
+    the atlas for policy, so the policy travels while the TARGET must not.
+
+    ROOT answers "where are the rules". This answers "whose tree am I changing". In this repository they
+    are the same path, and a planted case asserts that, so the split cannot drift into a difference here.
+
+    REFUSES rather than falling back to ROOT when the working directory is not a git repository. A
+    fallback would silently retarget a push at the atlas, which is the exact accident this exists to
+    prevent — and `none` is a real answer.
+    """
+    out = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=Path.cwd(),  # noqa: S607
+                         capture_output=True, text=True, check=False, timeout=600).stdout.strip()
+    if not out:
+        raise ValueError(f"REFUSED: {Path.cwd()} is not inside a git repository, so there is no tree to "
+                         f"push or pull. Run this from the repository you mean to change; the atlas it "
+                         f"reads its policy from is a separate question, answered by THEA_ROOT.")
+    return Path(out).resolve()
+
+
+@lru_cache(maxsize=1)
 def atlas() -> dict:
     data = strict_yaml(read("atlas.yaml"), "atlas.yaml")
     if not isinstance(data, dict):

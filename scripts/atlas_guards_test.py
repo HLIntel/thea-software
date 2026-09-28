@@ -834,7 +834,11 @@ def squash_lane_cases() -> None:
         git("checkout", "-q", "main")
         git("merge", "--squash", "lane", check=False)          # the shape a forge's squash-merge leaves
         git("commit", "-qm", "lane work (squashed)")
+        # THE TARGET IS THE WORKTREE, NOT THE ATLAS (3.35.0). Overriding ROOT used to redirect every
+        # git call here; since the landing tool separates "where the rules live" from "whose tree am I
+        # changing", the seam to override is the one that answers the second question.
         saved, branchstate.ROOT = branchstate.ROOT, Path(repo)
+        saved_target, branchstate.worktree = branchstate.worktree, lambda _p=Path(repo): _p
         try:
             squashed = branchstate.merged_by_patch("lane", "main")
             git("checkout", "-qb", "unmerged")
@@ -846,7 +850,7 @@ def squash_lane_cases() -> None:
             refused = subprocess.run(["git", "branch", "-d", "lane"], cwd=repo, capture_output=True,
                                      timeout=600, check=False).returncode
         finally:
-            branchstate.ROOT = saved
+            branchstate.ROOT, branchstate.worktree = saved, saved_target
     if not squashed or still_open or refused == 0:
         raise SystemExit(f"FAIL squash detection: squashed={squashed} unmerged={still_open} branch -d rc={refused}")
     CASES.append(("a squash-merged lane reads FINISHED while `git branch -d` still refuses it",

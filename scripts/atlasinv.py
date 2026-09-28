@@ -559,6 +559,9 @@ def _from_errors(errors, label: str):
     def check() -> str | None:
         problems = errors()
         return f"{len(problems)} {label} problem(s), first: {problems[0]}" if problems else None
+    # NAME WHAT IS WRAPPED. `thea id <invariant>` reported `_from_errors.<locals>.check` for nine
+    # invariants, which tells a reader nothing about where the refusal actually lives.
+    check.enforcer = f"{getattr(errors, '__module__', '')}.{getattr(errors, '__qualname__', '?')}".lstrip(".")
     return check
 
 

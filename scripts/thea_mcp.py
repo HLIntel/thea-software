@@ -70,9 +70,19 @@ def _schema(command: str) -> dict:
 
 
 def tools() -> list[dict]:
+    """Every tool this route exposes — DERIVED from the CLI's own subparsers, then filtered by effect.
+
+    Derived, because a second hand-written list narrows the day a verb is added beside it. Filtered,
+    because every tool here is annotated readOnlyHint and `land` and `sync` PUSH: the moment they joined
+    the CLI they appeared here as read-only tools that write, which is an annotation that is a rendering
+    rather than the identity. A command in neither list of command_effects is NOT exposed and fails the
+    contract, so a new verb is never published by this route by default. Writing goes through thea_edit.
+    """
     helps = _helps()
+    effects = atlas().get("command_effects") or {}
+    readers = set(effects.get("reads") or [])
     return [{"name": name, "description": helps[name], "inputSchema": _schema(name), "annotations": ANNOTATIONS}
-            for name in _subparsers()]
+            for name in _subparsers() if name in readers]
 
 
 def _argv(command: str, arguments: dict) -> list[str]:

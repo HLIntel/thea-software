@@ -8,6 +8,8 @@ asserted total instead of disappearing quietly.
 """
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
 T = None  # the running atlas_test module, bound by run()
@@ -26,6 +28,22 @@ def run(module) -> None:
     project_marker_cases()
     machine_dependence_cases()
     ast_cache_cases()
+    landing_target_cases()
+    command_effect_cases()
+    resolver_cases()
+    horizon_cases()
+
+
+def _git(repo, *args: str) -> None:
+    """Run git in a scratch repository with an identity, quietly, never raising.
+
+    ONE COPY FOR THE WHOLE SUITE (3.37.0). Three cases needed a throwaway repository and each wrote its
+    own two-line wrapper; the duplicate-structure cap caught the third and refused it, which is what a cap
+    of zero is for. A test helper written three times drifts three ways.
+    """
+    import subprocess  # noqa: PLC0415
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=repo,
+                   capture_output=True, timeout=600, check=False)
 
 
 def yaml_shape_cases() -> None:
@@ -362,3 +380,222 @@ def ast_cache_cases() -> None:
                   "a tree cache keyed by path, which would hand every planted defect the tree from "
                   "BEFORE its mutation and let 186 cases pass while proving nothing"))
     print("  ok    the syntax-tree cache answers from content, not from a name")
+
+
+def landing_target_cases() -> None:
+    """A landing targets the repository the caller is IN, and never the atlas it reads (3.35.0).
+
+    THEA IS ADDED TO AN AGENT'S LAYER AND DOES NOT OWN ITS WORK. Before this, every git command in the
+    landing tool ran with `cwd=ROOT` — so an agent that plugged the atlas in and asked to land would have
+    pushed, tagged and opened a pull request against the ATLAS instead of its own repository.
+    """
+    import subprocess
+    import tempfile
+
+    from atlascore import ROOT, worktree
+    # THE SPLIT MUST NOT DRIFT INTO A DIFFERENCE HERE: in this repository the atlas IS the worktree, so
+    # every existing behaviour is unchanged and the new target is exercised only by a consumer.
+    if worktree() != ROOT.resolve():
+        raise SystemExit(f"FAIL the atlas and the worktree disagree in the atlas itself: "
+                         f"{worktree()} vs {ROOT.resolve()}")
+    CASES.append(("the atlas root and the landing target are the same path inside the atlas",
+                  "a split that changes behaviour in the repository that defined it, where every "
+                  "existing case would then be testing a different code path than a consumer runs"))
+    print("  ok    the atlas root and the landing target are the same path inside the atlas")
+    atlas_cli = [sys.executable, str(ROOT / "scripts" / "atlas.py")]
+    refused = subprocess.run([*atlas_cli, "land"], cwd=ROOT, capture_output=True, text=True,
+                             timeout=600, check=False)
+    if refused.returncode != 3 or "is the ATLAS you read your rules from" not in refused.stdout:
+        raise SystemExit(f"FAIL landing the atlas was not refused: rc={refused.returncode} "
+                         f"{refused.stdout[:200]}")
+    CASES.append(("`thea land` refuses the atlas itself, by identity and not by name",
+                  "a consumer pushing to the repository it reads its rules from — which is what every "
+                  "git command in the landing tool did before the target was separated from the atlas"))
+    print("  ok    `thea land` refuses the atlas itself")
+    # A FOREIGN REPOSITORY IS THE POINT: it must get PAST the refusal, and its diff must be judged by
+    # its own language's check-only command before anything is pushed.
+    with tempfile.TemporaryDirectory() as repo:
+        def git(*a: str) -> None:
+            _git(repo, *a)
+        git("init", "-q", "-b", "main")
+        git("commit", "-q", "--allow-empty", "-m", "base")
+        (Path(repo) / "bad.py").write_text("def broken(\n", encoding="utf-8")
+        git("add", "bad.py")
+        env = {**os.environ, "THEA_ROOT": str(ROOT), "PYTHONPATH": str(ROOT / "scripts")}
+        out = subprocess.run([*atlas_cli, "land"], cwd=repo, capture_output=True, text=True,
+                             timeout=600, check=False, env=env)
+    if "is the ATLAS" in out.stdout:
+        raise SystemExit("FAIL a foreign repository was refused as though it were the atlas")
+    if out.returncode == 0 or "does not pass its own language" not in out.stdout:
+        raise SystemExit(f"FAIL a diff that does not parse was not refused before pushing: "
+                         f"rc={out.returncode} {out.stdout[:300]}")
+    CASES.append(("a foreign repository lands through the atlas, and a diff that does not parse is "
+                  "refused before anything is pushed",
+                  "a plug-and-play agent whose broken change reaches its remote, or whose own "
+                  "repository is mistaken for the atlas"))
+    print("  ok    a foreign repository lands through the atlas, and a broken diff is refused first")
+
+
+def command_effect_cases() -> None:
+    """Every subcommand is classified, and the read-only MCP route exposes only readers (3.35.0).
+
+    THE DEFECT WAS INTRODUCED AND CAUGHT IN ONE VERSION. The MCP tool list is derived from the CLI's own
+    subparsers, which is right; but every tool is annotated readOnlyHint, so adding `land` and `sync` to
+    the CLI published two tools that PUSH as read-only. Derived is not the same as classified.
+    """
+    import thea_mcp
+    from atlascore import atlas as declaration
+    effects = declaration().get("command_effects") or {}
+    writers, exposed = set(effects.get("writes") or {}), {t["name"] for t in thea_mcp.tools()}
+    if not writers or not exposed:
+        raise SystemExit(f"FAIL nothing to prove: {len(writers)} writers, {len(exposed)} exposed tools")
+    if exposed & writers:
+        raise SystemExit(f"FAIL the read-only route exposes a writing verb: {sorted(exposed & writers)}")
+    if not exposed < set(thea_mcp._subparsers()):  # noqa: SLF001
+        raise SystemExit("FAIL the exposed set is not a strict subset of the CLI, so nothing is filtered")
+    CASES.append((f"the read-only MCP route exposes {len(exposed)} readers and none of the "
+                  f"{len(writers)} verbs that write",
+                  "a tool list derived from the CLI and annotated read-only, which publishes any new "
+                  "writing verb as a read-only tool the day it is added"))
+    print("  ok    the read-only MCP route exposes readers only")
+    with mutated("atlas.yaml", lambda s: s.replace("  - failures\n", "", 1)):
+        case("a subcommand classified in neither reads nor writes FAILS",
+             "a new verb published by a read-only route by default, before anyone judged what it does",
+             True, "classified in neither command_effects")
+    with mutated("atlas.yaml", lambda s: s.replace("  - resume\n",
+                                                   "  - resume\n  - land\n", 1)):
+        case("a writing verb listed as a reader FAILS",
+             "an annotation that is a rendering and not the identity — a tool that pushes, published "
+             "to every agent as read-only",
+             True, "classifies ['land'] as BOTH")
+
+
+def resolver_cases() -> None:
+    """Any declared name resolves to every namespace that declares it, and an unknown one REFUSES (3.36.0).
+
+    675 declared names across 50 namespaces had no resolver, so the only way to learn what a name was
+    meant reading the declaration breadth-first — the one thing this repository tells every reader not to
+    do. A resolver that chose a winner among the namespaces would be right most of the time and silently
+    wrong about the rest, which is what makes choosing dangerous.
+
+    THE OVERLAP ITSELF IS A SEPARATE FINDING and is NOT excused here: six namespace pairs share three or
+    more keys, one as a clean subset and five only partially, meaning they have already drifted with
+    nothing checking that they agree. Reporting every namespace is how a reader SEES that; declaring the
+    relation is how it gets refused, and that is `namespace_relations`, not this resolver.
+    """
+    import resolve
+    from atlascore import atlas as declaration
+    spaces = resolve.namespaces()
+    if len(spaces) < 10:
+        raise SystemExit(f"FAIL the namespace roster collapsed to {len(spaces)}; it is derived from the "
+                         f"declaration's own top-level keys and cannot be this small")
+    # EVERY HARD INVARIANT RESOLVES TO A NAMED ENFORCER. This is the coverage assertion: a bare list
+    # member carries no fields, so without the cross-reference `thea id` told a reader only that it existed.
+    invariants = declaration().get("hard_invariants") or []
+    unnamed = [n for n in invariants
+               if not any(h.get("enforced_by") and "NOTHING REGISTERED" not in h["enforced_by"]
+                          for h in resolve.resolve(n))]
+    if unnamed:
+        raise SystemExit(f"FAIL {len(unnamed)} invariant(s) resolve to no named enforcer: {unnamed[:3]}")
+    CASES.append((f"all {len(invariants)} hard invariants resolve to the function that enforces them",
+                  "a bare list member that resolves to its own existence and nothing else, so a reader "
+                  "still has to search the tree for what refuses it"))
+    print(f"  ok    all {len(invariants)} hard invariants resolve to the function that enforces them")
+    # AMBIGUITY IS REPORTED, NEVER RESOLVED (rule 4).
+    doubled = [n for n in {m for members in spaces.values() for m in members}
+               if len(resolve.resolve(n)) > 1]
+    if not doubled:
+        raise SystemExit("FAIL no name resolves to two namespaces, so the ambiguity rule is untested")
+    if len(resolve.resolve(doubled[0])) < 2:
+        raise SystemExit(f"FAIL {doubled[0]!r} was resolved to one namespace when it is declared in two")
+    CASES.append((f"a name declared in more than one namespace resolves to ALL of them ({len(doubled)} such names)",
+                  "a resolver that picks a winner on ambiguous input, which is worse than one that "
+                  "errors — and it would be right most of the time, which is what makes it dangerous. "
+                  "The overlap itself is refused by namespace_relations, not excused here"))
+    print("  ok    a name declared in more than one namespace resolves to all of them")
+    # AN UNKNOWN NAME REFUSES, and the refusal suggests rather than guessing.
+    if resolve.resolve("a_name_that_is_declared_nowhere_at_all"):
+        raise SystemExit("FAIL an undeclared name resolved to something")
+    rc = resolve.main(["a_name_that_is_declared_nowhere_at_all", "--json"])
+    if rc != 3:
+        raise SystemExit(f"FAIL an undeclared name did not refuse: rc={rc}")
+    CASES.append(("an undeclared name refuses with an exit code, and offers near misses instead of a guess",
+                  "a resolver that answers something for every input, so a typo reads as a real finding"))
+    print("  ok    an undeclared name refuses rather than guessing")
+
+
+def horizon_cases() -> None:
+    """A check that cannot see its input says NOT RUN, and the resolver reaches every declared depth (3.37.0).
+
+    THE DEFECT THIS CLOSES was a clean pass CI did not earn. `actions/checkout` fetches ONE commit and
+    every reading in the freshness check comes from `git log -1 -- <path>`, so on a shallow clone every
+    path reads as touched at HEAD, nothing is behind, and there are no findings. CI printed green over
+    THIRTEEN real ones, the oldest 36 minor versions behind. The check also sat in no gate, so even its
+    exit code reached nobody.
+    """
+    import subprocess
+    import tempfile
+
+    import freshness
+    import resolve
+    # A SHALLOW CLONE MUST REFUSE. Built here rather than asserted in prose, because the whole defect was
+    # a belief about what git would answer in an environment nobody reproduced.
+    with tempfile.TemporaryDirectory() as home:
+        origin = Path(home) / "origin"
+        origin.mkdir()
+        def git(cwd, *a):
+            _git(cwd, *a)
+        git(origin, "init", "-q", "-b", "main")
+        for n in range(3):
+            (origin / "f.txt").write_text(f"{n}\n", encoding="utf-8")
+            git(origin, "add", "f.txt")
+            git(origin, "commit", "-qm", f"c{n}")
+        shallow = Path(home) / "shallow"
+        subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{origin}", str(shallow)],
+                       capture_output=True, timeout=600, check=False)
+        saved = freshness.ROOT
+        try:
+            freshness.ROOT = shallow
+            blind = freshness.history_is_visible()
+        finally:
+            freshness.ROOT = saved
+    if not blind or "SHALLOW" not in blind:
+        raise SystemExit(f"FAIL a shallow clone did not report itself blind: {blind!r}")
+    if freshness.history_is_visible():
+        raise SystemExit("FAIL this checkout reports itself blind, so the check would never run here")
+    CASES.append(("the freshness check reports NOT RUN on a shallow clone instead of a clean pass",
+                  "a clean pass a check did not earn — measured as 13 real findings invisible in CI, the "
+                  "oldest 36 minor versions behind, because the runner fetches one commit"))
+    print("  ok    the freshness check reports NOT RUN on a shallow clone")
+    # THE RESOLVER'S TWO DEFECTS, both found by using it: a block is a name, and blocks nest.
+    if not resolve.resolve("agent_policy"):
+        raise SystemExit("FAIL a top-level block does not resolve, so `thea id agent_policy` answers none")
+    nested = resolve.resolve("narrow_tools")
+    if not any("/" in h["namespace"] for h in nested):
+        raise SystemExit(f"FAIL a nested declaration does not resolve: {nested}")
+    spaces = resolve.namespaces()
+    if len(spaces) < 100:
+        raise SystemExit(f"FAIL only {len(spaces)} namespaces reachable; nested blocks are where the "
+                         f"names an agent meets in a refusal actually live")
+    CASES.append((f"a top-level block and a nested one both resolve — {len(spaces)} namespaces reachable",
+                  "a resolver that answers `none` for `agent_policy`, which is the most obvious question "
+                  "an agent can ask, and for every control named in a refusal"))
+    print(f"  ok    a top-level block and a nested one both resolve ({len(spaces)} namespaces)")
+    # ASSERTED AGAINST ITS OWN INSTRUMENT, not against `check`. The horizon is a SEPARATE gate — it reads
+    # git history, which `check` deliberately does not — so `case()` would run a check that cannot see
+    # this rule and would report the wrong cause.
+    from atlascore import atlas as declaration
+    with mutated("atlas.yaml", lambda s: s.replace("      patterns: '3.37.0'" + chr(10), "", 1)):
+        declaration.cache_clear()
+        found = freshness.freshness_errors()
+    declaration.cache_clear()
+    if not any("patterns/" in f and "behind" in f for f in found):
+        raise SystemExit(f"FAIL a path past the horizon with no review and no exemption was not refused: "
+                         f"{found[:2]}")
+    if freshness.freshness_errors():
+        raise SystemExit(f"FAIL the horizon is not clean on this tree, so it could not be gated: "
+                         f"{freshness.freshness_errors()[:2]}")
+    CASES.append(("a path past the review horizon with neither a review nor an exemption is refused",
+                  "a path nobody opened and nobody noticed — and a horizon that reported thirteen of "
+                  "them for many versions while sitting in no gate at all"))
+    print("  ok    a path past the review horizon with neither a review nor an exemption is refused")
