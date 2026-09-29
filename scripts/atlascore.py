@@ -36,6 +36,23 @@ ROOT = Path(
     or getattr(sys, "_MEIPASS", None)
     or Path(__file__).resolve().parents[1]
 )
+def worktree() -> Path:
+    """The git repository a command ACTS ON — not always the atlas it READS its policy from.
+
+    ROOT answers "where are the rules"; this answers "whose tree is changing". Here they are one path.
+    From another repository an agent routes through this atlas and lands in ITS OWN tree: every git
+    command in a landing runs here, never at ROOT. Refuses outside a git repository rather than falling
+    back to ROOT, because a fallback would retarget a push at the atlas — `none` is a real answer.
+    """
+    out = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=Path.cwd(),  # noqa: S607
+                         capture_output=True, text=True, check=False, timeout=600).stdout.strip()
+    if not out:
+        raise ValueError(f"REFUSED: {Path.cwd()} is not inside a git repository, so there is no tree to "
+                         "land. Run this from the repository you mean to change; the atlas it reads its "
+                         "policy from is a separate question, answered by THEA_ROOT.")
+    return Path(out).resolve()
+
+
 LINK_RE = re.compile(r"!?\[[^\]]*\]\((?:<([^>]+)>|([^\s)]+))(?:\s+[^)]*)?\)")
 # THE README'S ENTIRE HEADER IS HTML — banner, badges and navigation — and none of it was
 # link-checked. The banner file was renamed twice at v2.0.0 and the contract said nothing,
