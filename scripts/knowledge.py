@@ -330,7 +330,9 @@ def relevant_failures(query: str, limit: int = 3) -> list[tuple[str, int]]:
     can check its own next step against. Ranked by shared words (an id word counts double), then by
     sightings; a shape sharing nothing is never returned, so a miss says `none` rather than padding."""
     ledger = atlas().get("agent_failure_modes") or {}
-    q = _words(query)
+    # A PATH'S LEADING DIRECTORIES ARE WHERE IT LIVES, NOT WHAT IT IS: `/home/user/...` shares words with
+    # nothing it teaches. Only the last two components carry meaning; a task has no slash and is kept whole.
+    q = _words("/".join(str(query).split("/")[-2:]) if "/" in str(query) else query)
     suffix = "." + str(query).rsplit(".", 1)[-1] if "." in str(query) else ""
     route = (atlas().get("artifact_routes") or {}).get(suffix)
     if route:
