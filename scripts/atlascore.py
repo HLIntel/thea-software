@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import functools
 import hashlib
 import json
 import os
@@ -427,8 +428,13 @@ def tracked() -> list[Path]:
     return list(found)
 
 
+@functools.lru_cache(maxsize=8)
+def _resolved(root: Path) -> Path:
+    return root.resolve()
+
+
 def rel(path: Path) -> str:
-    return path.resolve().relative_to(ROOT.resolve()).as_posix()
+    return path.resolve().relative_to(_resolved(ROOT)).as_posix()
 
 
 def link_target(source: Path, raw: str) -> Path | None:
@@ -466,8 +472,11 @@ def parse_errors() -> list[str]:
     for path in tracked():
         if path.suffix != ".py" or path.is_symlink() or not path.exists():
             continue
-        try:
-            ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        text = path.read_text(encoding="utf-8")
+        if parsed_python(text, str(path)) is not None:  # the shared content-keyed tree every instrument walks
+            continue
+        try:  # only a file that fails pays a second parse, to name the error and its line
+            ast.parse(text, filename=str(path))
         except (SyntaxError, ValueError) as exc:
             errors.append(f"{rel(path)} is not valid Python: {exc.__class__.__name__} "
                           f"at line {getattr(exc, 'lineno', '?')}")
