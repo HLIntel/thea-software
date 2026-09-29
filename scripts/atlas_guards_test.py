@@ -62,6 +62,7 @@ def run(module) -> None:
     squash_lane_cases()
     landing_target_cases()
     consumer_gate_cases()
+    lesson_cases()
     skill_tax_cases()
     rescue_tag_cases()
     declared_input_cases()
@@ -899,6 +900,19 @@ def consumer_gate_cases() -> None:
     CASES.append(("a consumer's changed file gets the gates the atlas routes for it, and an undeclared one is reported",
                   "an atlas that filters nothing: a consumer's broken file landing because no gate was asked for it"))
     print("  ok    a consumer's changed file gets the gates the atlas routes for it, and an undeclared one is reported")
+
+
+def lesson_cases() -> None:
+    """`thea failures --for` hands the shapes relevant to a change, and nothing when none is (3.41.0)."""
+    import knowledge  # noqa: PLC0415
+    picked = [k for k, _ in knowledge.relevant_failures("edit a yaml config and write it back", 3)]
+    if "a_round_trip_that_drops_what_the_format_allowed" not in picked:
+        raise SystemExit(f"FAIL the lesson for a YAML write-back missed the round-trip shape: {picked}")
+    if knowledge.relevant_failures("zzqqxx", 3):
+        raise SystemExit("FAIL a query sharing no word with any shape was padded with unrelated lessons")
+    CASES.append(("a change is handed the ledger shapes that share its words, and an unrelated query gets none",
+                  "a lesson list that is either the whole ledger or noise, so it teaches nothing at the point of action"))
+    print("  ok    a change is handed the ledger shapes that share its words, and an unrelated query gets none")
 
 
 def skill_tax_cases() -> None:
