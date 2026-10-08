@@ -324,6 +324,12 @@ COMMAND_ROWS: tuple[tuple[str, str, str, tuple], ...] = (
         ),
     ),
     (
+        "links",
+        "this release's addresses and the commands each companion reads; exit 1 when one is gone",
+        "emit the schema 1 record the site build and the dashboard read",
+        (),
+    ),
+    (
         "model",
         "which rung answers each judgment, read from the attached student bundle; NOT RUN on a bad sha",
         "emit the schema 1 record the dashboard's Model page parses",
@@ -416,6 +422,12 @@ COMMAND_ROWS: tuple[tuple[str, str, str, tuple], ...] = (
                 help="a file or task: only the shapes most relevant to it, with their tells",
             ),
             _arg("--limit", type=int, default=3, help="how many shapes --for returns"),
+            _arg(
+                "--match",
+                default=None,
+                metavar="TEXT",
+                help="an error text: the shapes whose declared signature it matches (exit 1 when none does)",
+            ),
             _arg(
                 "--draft", default=None, help="what just happened: prepares the ledger entry for <id>, writes nothing"
             ),

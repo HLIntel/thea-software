@@ -212,7 +212,7 @@ def install_cases() -> None:
         (["process", "implementation"], "source_change"),
         (["plan", "scripts/doctor.py", "--task", "implementation", "--change", "source_change"], "unit_tests"),
         (["commands", "--json"], '"thea-commands/1"'),
-        (["doctor"], "python"),
+        (["doctor"], "pair  github_app:"),  # printed only when no required capability is missing
         (["staleness", "oldest", "1"], "least recently edited"),
         (["check"], "contract"),
     )
@@ -675,11 +675,13 @@ def cli_record_cases() -> None:
         "handoff": [["handoff", here, "--json"]],
         "cadence": [["cadence", "--json"]],
         "role": [["role", r, "--json"] for r in atlas.atlas().get("agent_roles") or {}],
+        "links": [["links", "--json"]],
         "resume": [["resume", "--json"]],
         "steps": [["steps", here, "--json"]],
         "failures": [
             ["failures", "--json"],
             ["failures", "--for", here, "--json"],
+            ["failures", "--match", "substring not found", "--json"],
             ["failures", "a_draft_probe_shape", "--draft", "x", "--json"],
         ],
         "successes": [["successes", "--json"], ["successes", "--for", here, "--json"]],
@@ -961,8 +963,12 @@ def land_reuse_cases() -> None:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--install"]:  # the documented install, executed: installcheck.py
+        import installcheck
+
+        sys.exit(installcheck.main(sys.argv[2:]))
     if sys.argv[1:] != ["--brief-smoke"]:
-        raise SystemExit("usage: python scripts/cli_test.py --brief-smoke")
+        raise SystemExit("usage: python scripts/cli_test.py --brief-smoke | --install [--source local|published]")
     found = _compact_context_problems()
     if found:
         raise SystemExit("FAIL compact context: " + "; ".join(found))

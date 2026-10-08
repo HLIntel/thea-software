@@ -483,13 +483,40 @@ def _minor_distance(then: str, now: str) -> int:
     return (c - a) * 100 + (d - b)
 
 
+SIGNATURE_MAX = 200
+
+
+def _signature_errors(name: str, spec: dict, seen: dict[str, str]) -> list[str]:
+    """`signature` is the error text a shape leaves behind, as regexes `thea failures --match` reads: each compiles,
+    stays short, and no two shapes claim the same pattern (a match must name ONE shape)."""
+    import re  # noqa: PLC0415
+
+    errors: list[str] = []
+    rows = spec.get("signature")
+    if rows is None:
+        return errors
+    if not isinstance(rows, list) or not rows or not all(isinstance(r, str) and r.strip() for r in rows):
+        return [f"agent_failure_modes/{name} signature must be a non-empty list of regex strings"]
+    for pattern in rows:
+        if len(pattern) > SIGNATURE_MAX:
+            errors.append(f"agent_failure_modes/{name} signature is over {SIGNATURE_MAX} characters: {pattern[:40]}...")
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            errors.append(f"agent_failure_modes/{name} signature does not compile ({exc}): {pattern[:60]}")
+        if seen.setdefault(pattern, name) != name:
+            errors.append(f"agent_failure_modes/{name} signature repeats {seen[pattern]}'s: {pattern[:60]}")
+    return errors
+
+
 def failure_mode_enforcer_errors() -> list[str]:
     from agentpolicy import _resolves  # noqa: PLC0415
     errors: list[str] = []
+    claimed: dict[str, str] = {}
     for name, spec in (atlas().get("agent_failure_modes") or {}).items():
         spec = spec or {}
         refs = spec.get("enforced_by") or []
-        ranking = _sighting_errors(name, spec)
+        ranking = _sighting_errors(name, spec) + _signature_errors(name, spec, claimed)
         if not refs:
             if not (str(spec.get("unenforceable") or "").strip() and str(spec.get("closed_by") or "").strip()):
                 errors.append(f"agent_failure_modes/{name} names no enforcer, and no reason with a closer")
@@ -650,6 +677,7 @@ INVARIANT_CHECKS = {
     "no_orphaned_symbols": _from_errors(orphan_errors, "orphaned-symbol"),
     "public_tree_leaks_nothing": _from_errors(leak_errors, "public-surface"),
     "yaml_prose_is_quoted": _from_errors(yaml_shape_errors, "yaml-shape"),
+    "documented_install_runs": _from_errors(lambda: __import__("installcheck").documented_install_errors(), "install-claim"),
     "plants_can_still_apply": _from_errors(plant_anchor_errors, "stale-plant"),
     "forbidden_calls_are_refused": _from_errors(forbidden_call_errors, "forbidden-call"),
     "instruments_are_reached_or_declared": _from_errors(instrument_reach_errors, "unreached-instrument"),
