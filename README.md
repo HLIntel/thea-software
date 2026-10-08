@@ -1,6 +1,6 @@
 <!-- AGENTS: do not read this page breadth-first. Plug in: `python scripts/atlas.py port <file>`,
      or parse .agent/bootstrap.json — one record back. -->
-<!-- mcp-name: io.github.HLIntel/thea -->
+<!-- mcp-name: io.github.HeartlandIntel/thea -->
 <p align="center">
   <img src="docs/assets/thea.webp"
        alt="Thea — software development and AI agents, by HLIntel LLC" width="240">
