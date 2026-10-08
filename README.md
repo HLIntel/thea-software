@@ -34,7 +34,7 @@ An AI reading this: agents start at [llms.txt](llms.txt), chats at [CHAT.md](CHA
 
 Thea tells an AI coding agent which commands prove a change to a file, and fails the build when a
 change skipped them. One declaration, [`atlas.yaml`](atlas.yaml), answers **what proves this change
-is correct?** It refuses ambiguous input.
+is correct?**
 
 <!-- BEGIN generated: proof-flow (python scripts/atlas.py index --write) -->
 ```mermaid
