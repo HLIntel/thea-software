@@ -23,6 +23,7 @@ from __future__ import annotations
 import ast
 import re
 import sys
+from typing import Any, cast
 
 from atlascore import ROOT, parsed_python, walked
 
@@ -60,7 +61,7 @@ def anchors() -> list[tuple[str, str, str]]:
                 continue
             if not node.args or not isinstance(node.args[0], ast.Constant):
                 continue
-            target = node.args[0].value
+            target = cast(str, node.args[0].value)
             for sub in walked(node):
                 if (
                     isinstance(sub, ast.Call)
@@ -80,12 +81,11 @@ def _table_anchors(rel: str, tree: ast.AST) -> list[tuple[str, str, str]]:
     table passed `thea check` and died only in the full suite, because the literal is in the table, not
     in the call — the one shape of plant this checker had never read."""
     found = []
+    # SIGHTED at 3.53.0: DECLARATION_PLANTS is a MODULE-level annotated list whose rows carry the file too
+    # (`mutated(where, ...)`), and both shapes were invisible — `routes: 36` outlived its text silently.
+    module = _tables(tree.body if isinstance(tree, ast.Module) else [])
     for func in (n for n in walked(tree) if isinstance(n, ast.FunctionDef)):
-        tables = {
-            a.targets[0].id: a.value
-            for a in walked(func)
-            if isinstance(a, ast.Assign) and isinstance(a.targets[0], ast.Name) and isinstance(a.value, ast.List)
-        }
+        tables = {**module, **_tables(walked(func))}
         for loop in (
             n
             for n in walked(func)
@@ -94,14 +94,14 @@ def _table_anchors(rel: str, tree: ast.AST) -> list[tuple[str, str, str]]:
             and n.iter.id in tables
             and isinstance(n.target, ast.Tuple)
         ):
-            names = [getattr(e, "id", "") for e in loop.target.elts]
+            names = [getattr(e, "id", "") for e in cast(ast.Tuple, loop.target).elts]
             for call in (
                 n
                 for n in walked(loop)
                 if isinstance(n, ast.Call)
                 and getattr(n.func, "id", "") == "mutated"
                 and n.args
-                and isinstance(n.args[0], ast.Constant)
+                and (isinstance(n.args[0], ast.Constant) or getattr(n.args[0], "id", "") in names)
             ):
                 bound = {
                     a.arg: getattr(d, "id", "")
@@ -121,11 +121,36 @@ def _table_anchors(rel: str, tree: ast.AST) -> list[tuple[str, str, str]]:
                         name = bound.get(sub.args[0].id, sub.args[0].id)
                         if name in names:
                             found += [
-                                (rel, call.args[0].value, row.elts[names.index(name)].value)
-                                for row in tables[loop.iter.id].elts
-                                if isinstance(row, ast.Tuple) and isinstance(row.elts[names.index(name)], ast.Constant)
+                                (
+                                    rel,
+                                    _target(call.args[0], names, row),
+                                    cast(ast.Constant, row.elts[names.index(name)]).value,
+                                )
+                                for row in tables[cast(ast.Name, loop.iter).id].elts
+                                if isinstance(row, ast.Tuple)
+                                and isinstance(row.elts[names.index(name)], ast.Constant)
+                                and _target(call.args[0], names, row)
                             ]
     return found
+
+
+def _tables(nodes) -> dict:
+    """Every `NAME = [...]` or `NAME: T = [...]` list among `nodes`, by name."""
+    return {
+        cast(Any, a.target if isinstance(a, ast.AnnAssign) else a.targets[0]).id: a.value
+        for a in nodes
+        if isinstance(a, (ast.Assign, ast.AnnAssign))
+        and isinstance(a.target if isinstance(a, ast.AnnAssign) else a.targets[0], ast.Name)
+        and isinstance(a.value, ast.List)
+    }
+
+
+def _target(arg: ast.AST, names: list[str], row: ast.Tuple) -> str | None:
+    """The file a plant mutates: a literal in the call, or the row's own column the loop binds it to."""
+    if isinstance(arg, ast.Constant):
+        return cast(str | None, arg.value)
+    cell = row.elts[names.index(cast(ast.Name, arg).id)] if getattr(arg, "id", "") in names else None
+    return cell.value if isinstance(cell, ast.Constant) and isinstance(cell.value, str) else None
 
 
 def _read_anchors(rel: str, tree: ast.AST) -> list[tuple[str, str, str]]:
@@ -140,11 +165,11 @@ def _read_anchors(rel: str, tree: ast.AST) -> list[tuple[str, str, str]]:
             if (
                 isinstance(call, ast.Call)
                 and getattr(call.func, "attr", "") == "read_text"
-                and _read_target(call.func.value)
+                and _read_target(cast(ast.Attribute, call.func).value)
             ):
-                files[a.targets[0].id] = _read_target(call.func.value)
+                files[cast(ast.Name, a.targets[0]).id] = _read_target(cast(ast.Attribute, call.func).value)
         for call in (n for n in walked(func) if isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "index"):
-            owner = getattr(call.func.value, "id", "")
+            owner = getattr(cast(ast.Attribute, call.func).value, "id", "")
             if (
                 owner in files
                 and call.args
@@ -159,13 +184,13 @@ def _read_anchors(rel: str, tree: ast.AST) -> list[tuple[str, str, str]]:
             for n in walked(func)
             if isinstance(n, ast.Call)
             and getattr(n.func, "attr", "") in ("search", "match")
-            and getattr(n.func.value, "id", "") == "re"
+            and getattr(cast(ast.Attribute, n.func).value, "id", "") == "re"
             and len(n.args) > 1
             and isinstance(n.args[0], ast.Constant)
         ):
             src = call.args[1]
             target = files.get(getattr(src, "id", "")) or (
-                _read_target(src.func.value)
+                _read_target(cast(ast.Attribute, cast(ast.Call, src).func).value)
                 if isinstance(src, ast.Call) and getattr(src.func, "attr", "") == "read_text"
                 else None
             )
@@ -173,7 +198,7 @@ def _read_anchors(rel: str, tree: ast.AST) -> list[tuple[str, str, str]]:
                 flags = sum(
                     getattr(re, a.attr, 0) for x in call.args[2:] for a in walked(x) if isinstance(a, ast.Attribute)
                 )
-                found.append((rel, target, re.compile(call.args[0].value, flags)))
+                found.append((rel, target, re.compile(cast(str, cast(ast.Constant, call.args[0]).value), flags)))
     return found
 
 
@@ -200,7 +225,7 @@ def plant_anchor_errors(rows: list[tuple[str, str, str]] | None = None) -> list[
         if texts[target] is None:
             errors.append(f"{suite}: plants into {target}, which does not exist")
             continue
-        if not hits(texts[target], anchor):
+        if not hits(cast(str, texts[target]), anchor):
             errors.append(
                 f"{suite}: a mutation anchor matches NOTHING in {target} — {getattr(anchor, 'pattern', anchor)[:60]!r}. "
                 f"Re-anchor it on the current text; a plant that applies to nothing leaves "

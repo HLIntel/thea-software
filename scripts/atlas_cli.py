@@ -6,6 +6,7 @@ exports it, then imports the harness. IT PRINTS THE RULE THAT DECIDED THE ROOT: 
 a lucky fall-through are the same answer with very different trust. A CONSUMER PINS A REF, NEVER
 `main`, in `.atlas.yaml`, so the pin is reviewed in its own diff.
 WITH NO ROOT AND NO CHECKOUT (3.53.0) it fetches its own version's release, sha256-checked; else refuses.
+THAT TREE IS LOCKED (3.54.0): read-only, and re-hashed on every run; an edit refuses, never runs.
 """
 
 from __future__ import annotations
@@ -87,11 +88,11 @@ def resolve_root(argv: list[str], cwd: Path) -> tuple[Path, str]:
     value = root_flag(argv)[0]
     if value is not None:
         return Path(value).expanduser().resolve(), f"explicit {FLAG}"
-    for var in ("THEA_ROOT", "CODE_DEVELOPMENT_ROOT"):  # the second is the pre-3.0 name, still honoured
+    for var in ("THEA_ROOT", "CODE_DEVELOPMENT_ROOT"):  # the second is the pre-3.0 name
         if os.environ.get(var):
             return Path(os.environ[var]).resolve(), f"{var} in the environment"
     config, where = _config(cwd)
-    if config.get("root"):
+    if where and config.get("root"):
         base = (where.parent / config["root"]).resolve()
         return base, f"root declared in {where.name} (ref {config.get('ref', 'unpinned')})"
     return Path(__file__).resolve().parents[1], INSTALLED_FROM
@@ -111,10 +112,29 @@ def _get(url: str) -> bytes:
         raise FetchError(f"cannot download {url}: {exc}") from None
 
 
+def _manifest(tree: Path) -> list[str]:
+    """`sha256sum` lines for every file under `tree` but the marker: `sha256sum -c` re-checks it by hand."""
+    files = sorted(p for p in tree.rglob("*") if p.is_file() and p.name != MARKER)
+    return [f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.relative_to(tree).as_posix()}" for p in files]
+
+
+KEPT_RELEASES = 3  # a pruned release re-fetches
+
+
+def _prune_releases(cache: Path) -> None:
+    for mark in sorted(cache.glob(f"atlas-*/{MARKER}"), key=os.path.getmtime)[:-KEPT_RELEASES]:
+        shutil.rmtree(mark.parent, ignore_errors=True)
+    shutil.rmtree(cache / "pycache", ignore_errors=True)  # bytecode: rebuilt on import
+
+
 def fetch_atlas(version: str) -> Path:
     """Release v<version>'s tree, cached or downloaded and sha256-checked; else FetchError."""
     dest = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache", "thea", f"atlas-{version}")
     if (dest / MARKER).is_file():
+        changed = set((dest / MARKER).read_text().splitlines()[1:]) ^ set(_manifest(dest))
+        if changed:
+            path = min(changed).partition("  ")[2]
+            raise FetchError(f"{dest}: {path} changed after download; remove {dest} to fetch v{version} again")
         return dest
     name = f"thea-v{version}.tar.gz"
     url = f"{RELEASES}/v{version}/{name}"
@@ -133,9 +153,13 @@ def fetch_atlas(version: str) -> Path:
         tree = work / tops.pop()
         if tops or (tree / "VERSION").read_text().strip() != version:
             raise FetchError(f"{name} is not one tree of contract {version}")
-        (tree / MARKER).write_text(f"{want[0]}  {name}\n")
+        (tree / MARKER).write_text("".join(f"{line}\n" for line in [f"{want[0]}  {name}", *_manifest(tree)]))
+        for path in tree.rglob("*"):
+            if path.is_file():
+                path.chmod(path.stat().st_mode & ~0o222)  # read-only, marker too: an edit fails where it is made
         shutil.rmtree(dest, ignore_errors=True)  # an unmarked, interrupted unpack
         os.replace(tree, dest)
+        _prune_releases(dest.parent)
     except (tarfile.TarError, OSError, TypeError) as exc:  # TypeError: no data filter before 3.11.4
         raise FetchError(f"{name} could not be unpacked: {exc}") from None
     finally:
@@ -152,34 +176,40 @@ def _resolved(argv: list[str]) -> tuple:
             return root, rule + "; THEA_NO_FETCH=1"
         from importlib.metadata import version  # noqa: PLC0415
 
-        return fetch_atlas(version("thea-software")), "its own release, sha256-checked"
+        root = fetch_atlas(version("thea-software"))
+        # Bytecode goes beside the locked tree, never into it, here and in every child process.
+        os.environ["PYTHONPYCACHEPREFIX"] = sys.pycache_prefix = str(root.parent / "pycache")
+        return root, "its own release, sha256-checked and locked"
     except (ConfigError, FetchError, ImportError) as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return None, None
 
 
+def _enter(argv: list[str], script: str) -> tuple:
+    """Resolve, export, put scripts/ first on the path; (None, None) if refused."""
+    root, rule = _resolved(argv)
+    if root is None:
+        return None, None
+    # THE HARNESS COMES FROM THE ATLAS, NEVER THE WHEEL (3.7.0): a bundled copy is a second implementation.
+    if not (root / "atlas.yaml").exists() or not (root / "scripts" / script).exists():
+        hint = f"point at a checkout with {FLAG}, THEA_ROOT, or `atlas: root:` in {CONSUMER_CONFIG}"
+        print(f"no atlas with scripts/{script} at {root} (resolved by: {rule})\n{hint}", file=sys.stderr)
+        return None, None
+    os.environ["THEA_ROOT"] = os.environ["CODE_DEVELOPMENT_ROOT"] = str(root)
+    sys.path.insert(0, str(root / "scripts"))
+    return root, rule
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
-    root, rule = _resolved(argv)
+    root, rule = _enter(argv, "atlas.py")
     if root is None:
         return 2
     _, index, width = root_flag(argv)
     del argv[index : index + width]
-    if not (root / "atlas.yaml").exists():
-        print(f"no atlas at {root} (resolved by: {rule})", file=sys.stderr)
-        print(f"point at a checkout with {FLAG}, THEA_ROOT, or `atlas: root:` in {CONSUMER_CONFIG}", file=sys.stderr)
-        return 2
-    os.environ["THEA_ROOT"] = os.environ["CODE_DEVELOPMENT_ROOT"] = str(root)
-    # THE HARNESS COMES FROM THE ATLAS, NEVER THE WHEEL (3.7.0): a bundled copy is a second implementation.
-    harness = root / "scripts"
-    if not (harness / "atlas.py").exists():
-        print(f"{root} has an atlas.yaml and no scripts/atlas.py — not a Thea checkout", file=sys.stderr)
-        return 2
-    sys.path.insert(0, str(harness))
     if "--where" in argv:
-        print(f"atlas root: {root}")
-        print(f"resolved by: {rule}")
-        # An agent handed only an install must still find where to start: the resolved atlas's entry.
+        print(f"atlas root: {root}\nresolved by: {rule}")
+        # an agent handed only an install still finds where to start
         print(f"agent entry: {root / '.agent' / 'bootstrap.json'}  (then: thea gate <file>)")
         return 0
     import atlas  # noqa: PLC0415 — deliberate: the root must be exported before this import
@@ -192,15 +222,9 @@ def mcp_main() -> int:
     argv = sys.argv[1:]
     if "--where" in argv:
         return main(argv)
-    root, rule = _resolved(argv)
-    if root is None:
+    if _enter(argv, "thea_mcp.py")[0] is None:
         return 2
-    if not (root / "scripts" / "thea_mcp.py").exists():
-        print(f"no Thea MCP server at {root} (resolved by: {rule})", file=sys.stderr)
-        return 2
-    os.environ["THEA_ROOT"] = os.environ["CODE_DEVELOPMENT_ROOT"] = str(root)
-    sys.path.insert(0, str(root / "scripts"))
-    import thea_mcp  # noqa: PLC0415 — deliberate: the root must be exported before this import
+    import thea_mcp  # noqa: PLC0415 — as in main
 
     return thea_mcp.serve()
 

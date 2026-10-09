@@ -21,11 +21,12 @@ import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
+from typing import Any, NoReturn
 
 import yaml
 
 
-def refuse_below_floor(missing: str) -> None:
+def refuse_below_floor(missing: str) -> NoReturn:
     """Below pyproject's requires-python floor the primitives are NOT RUN (exit 2), never a crash read as a broken
     contract: agents ran these scripts as a bare `python3` resolving to a 3.9 system interpreter, and the traceback
     named a missing module (tomllib, 3.11), not the interpreter (an_interpreter_below_the_declared_floor)."""
@@ -224,6 +225,8 @@ class _RefusesDuplicates:
     collision happened to be noticed.
     """
 
+    construct_object: Any
+
     def construct_mapping(self, node, deep=False):  # type: ignore[override]
         seen: set = set()
         for key_node, value_node in node.value:
@@ -263,7 +266,7 @@ def portable_yaml(text: str, where: str) -> object:
         raise ValueError(f"{where}: {exc}") from None
 
 
-def read_jsonc(path: str) -> object:
+def read_jsonc(path: str) -> Any:
     """JSONC from a file. The parsing lives in `parse_jsonc` so it can be FUZZED without a file."""
     return parse_jsonc((ROOT / path).read_text(encoding="utf-8"))
 
@@ -336,7 +339,7 @@ _PARSED_BYTES = [0]
 _PARSED_CAP_BYTES = 32 * 1024 * 1024
 
 
-def strict_yaml(text: str, where: str) -> object:
+def strict_yaml(text: str, where: str) -> Any:
     """Parse YAML, refusing duplicate keys. Every YAML read in this repository goes through here.
 
     CACHED BY CONTENT, NEVER BY NAME. MEASURED at 2.27.0: one check() parsed ~37 files 671 times,
@@ -364,11 +367,11 @@ def strict_yaml(text: str, where: str) -> object:
     return copy.deepcopy(hit)
 
 
-_TREES: dict[bytes, object] = {}
+_TREES: dict[bytes, ast.Module | None] = {}
 _TREE_BYTES = [0]
 
 
-def parsed_python(text: str, where: str):
+def parsed_python(text: str, where: str) -> ast.Module | None:
     """The syntax tree for `text`, or None when it does not parse. CACHED BY CONTENT, NEVER BY NAME.
 
     MEASURED at 3.34.0. Six instruments walk the same Python sources in one contract run — three
@@ -477,6 +480,29 @@ def shebang_gate_argv(path_value: str, gate: str) -> list[str] | None:
     return [str(a) for a in argv] if isinstance(argv, list) and argv else None
 
 
+def _inside(path: Path) -> bool:
+    try:
+        path.resolve().relative_to(ROOT.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _pack_directory(path: Path) -> str | None:
+    """The pack whose directory holds `path`, nested first, or None — only for paths in this repository."""
+    if not _inside(path):
+        return None
+    parts = path.resolve().relative_to(ROOT.resolve()).parts
+    if "languages" not in parts:
+        return None
+    i = parts.index("languages")
+    for depth in (2, 1):
+        candidate = "/".join(parts[i + 1 : i + 1 + depth])
+        if candidate and (ROOT / "languages" / candidate / "README.md").exists():
+            return candidate
+    return None
+
+
 def route_with_evidence(path_value: str) -> tuple[str | None, str, str]:
     """(route, the precedence rule that decided it, the evidence for that decision).
 
@@ -500,23 +526,26 @@ def route_with_evidence(path_value: str) -> tuple[str | None, str, str]:
             f"#!{interpreter} in atlas.yaml/routing_policy/shebang_dialects",
         )
     path = Path(path_value)
-    suffix = path.suffix.lower()
-    language = routes().get(suffix)
-    if language:
-        return language, named("artifact_extension"), f"{suffix} in atlas.yaml/artifact_routes"
+    # THE FILENAME BEFORE THE SUFFIX (3.54.0): once .toml and .json routed, a suffix-first lookup took
+    # wrangler.toml from cloudflare. An exact filename is the narrower claim, so it decides first.
     manifest = project_manifests().get(path.name)
     if manifest:
         return manifest, named("project_manifest"), f"{path.name} in atlas.yaml/project_manifests"
-    try:
-        parts = path.resolve().relative_to(ROOT.resolve()).parts
-    except ValueError:
+    suffix = path.suffix.lower()
+    language = routes().get(suffix)
+    # A DOCUMENT IN A PACK IS THE PACK'S (3.54.0): once .md routed, languages/go/README.md answered
+    # markdown and a pack stopped routing to itself. A route listed in routing_policy.document_routes
+    # yields to the pack directory; a SOURCE suffix still wins over it, as declared.
+    documents = (atlas().get("routing_policy") or {}).get("document_routes") or []
+    if language and language not in documents:
+        return language, named("artifact_extension"), f"{suffix} in atlas.yaml/artifact_routes"
+    pack = _pack_directory(path)
+    if pack:
+        return pack, named("language_directory"), f"languages/{pack}/README.md exists"
+    if language:
+        return language, named("artifact_extension"), f"{suffix} in atlas.yaml/artifact_routes"
+    if not _inside(path):
         return None, "none", "the path is outside this repository, so no segment of it routes"
-    if "languages" in parts:
-        i = parts.index("languages")
-        for depth in (2, 1):
-            candidate = "/".join(parts[i + 1 : i + 1 + depth])
-            if candidate and (ROOT / "languages" / candidate / "README.md").exists():
-                return candidate, named("language_directory"), f"languages/{candidate}/README.md exists"
     return None, "none", f"no routed extension ({suffix or 'none'}) and no language pack in the path"
 
 
@@ -614,7 +643,9 @@ def ls_files(tree: Path, *pathspec: str, flags: tuple[str, ...] = (), env: dict 
     )
     if done.returncode:
         raise SystemExit(f"git ls-files failed in {tree}: {done.stderr.strip()}")
-    return [p for p in done.stdout.split("\0") if p]
+    # ONE ROW PER PATH (3.54.0): mid-merge, an unmerged path is listed once per stage, and a README
+    # regenerated then counted four phantom documents and linked one file three times.
+    return list(dict.fromkeys(p for p in done.stdout.split("\0") if p))
 
 
 def files_under(root: Path) -> list[Path]:

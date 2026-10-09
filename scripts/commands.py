@@ -195,7 +195,9 @@ def output_schema_errors(parser: argparse.ArgumentParser | None = None, schema: 
     import re  # noqa: PLC0415
 
     parser = parser or build_parser()[0]
-    tools = {p.name: json.loads(p.read_text(encoding="utf-8")) for p in sorted((ROOT / "tools").glob("*.schema.json"))}
+    tools: dict[str, dict] = {
+        p.name: json.loads(p.read_text(encoding="utf-8")) for p in sorted((ROOT / "tools").glob("*.schema.json"))
+    }
     schema = schema if schema is not None else tools.get(OUTPUT_SCHEMA.rsplit("/", 1)[1], {})
     defs, offered = schema.get("$defs") or {}, {str(r.get("$ref")) for r in schema.get("oneOf") or []}
     roster_ids = {str(((s.get("properties") or {}).get("schema") or {}).get("const")) for s in tools.values()}
@@ -431,6 +433,14 @@ COMMAND_ROWS: tuple[tuple[str, str, str, tuple], ...] = (
             _arg(
                 "--draft", default=None, help="what just happened: prepares the ledger entry for <id>, writes nothing"
             ),
+            _arg(
+                "--shown",
+                action="append",
+                default=None,
+                metavar="ID",
+                help="a shape a hook just showed an agent: sealed as a field_lesson event (repeatable; exit 2 on an unknown id)",
+            ),
+            _arg("--route", default=None, help="with --shown: the route of the file the lesson was shown for"),
         ),
     ),
     (

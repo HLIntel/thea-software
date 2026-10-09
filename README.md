@@ -28,7 +28,7 @@
      alt="OpenSSF Scorecard"></a>
 </p>
 
-An AI reading this: agents start at [llms.txt](llms.txt), chats at [CHAT.md](CHAT.md).
+Agents start at [llms.txt](llms.txt); chats at [CHAT.md](CHAT.md).
 
 ## What it does
 
@@ -42,45 +42,52 @@ is correct?**
 config:
   theme: base
   themeVariables:
-    primaryColor: "#ffffff"
-    primaryBorderColor: "#2e7d32"
-    primaryTextColor: "#1b3a1f"
-    lineColor: "#2e7d32"
-    clusterBkg: "#eef7ee"
-    clusterBorder: "#a5d6a7"
-    titleColor: "#1b5e20"
+    primaryColor: "#e6f2e7"
+    primaryBorderColor: "#6f9f73"
+    primaryTextColor: "#14301a"
+    lineColor: "#7f9483"
+    titleColor: "#6f9f73"
+    edgeLabelBackground: "#e6f2e7"
+    fontSize: "15px"
   flowchart:
-    subGraphTitleMargin: {top: 8, bottom: 16}
-    padding: 14
+    subGraphTitleMargin: {top: 4, bottom: 6}
+    padding: 4
+    nodeSpacing: 12
+    rankSpacing: 14
 ---
 flowchart TB
   accTitle: How Thea proves a change
-  accDescr: 7 runtimes ask, atlas.yaml routes to 1 of 36 packs and 64 gates, the same gates run at commit, in CI and in thea verify, anything but PASS is refused, verdicts feed the failure and success ledgers, a trained judge only advises
-  subgraph thea [" "]
-    direction TB
-    subgraph ask [1 · ask: one declaration answers]
-      direction LR
-      A[7 agent runtimes<br>Claude Code · Codex · Cursor · opencode · Hermes] -->|CLI · MCP · hooks · llms.txt| D[(atlas.yaml<br>82 instruments · 47 invariants)]
-      D -->|route| P[36 language packs] --> K[8 change classes] --> G[64 gates]
-    end
-    subgraph run [2 · prove: the same gates, three places]
-      direction LR
-      H[git hook · commit] & C[CI · pull request] & R[thea verify · agent] --> V{{exit code<br>PASS · FAIL · NOT RUN}}
-      V -->|PASS| M[landed]
-      V -->|not PASS| X[refused]
-    end
-    subgraph learn [3 · learn: every verdict is kept]
-      direction LR
-      F[108 failure shapes<br>40 success moves] --> N[handed back<br>at the next port]
-      F --> J[thea judge · model<br>advises, never decides]
-    end
-    ask --> run --> learn
+  accDescr: any agent, chat or model plugs in, each file routes to its gates, hooks guard, the same gates prove at commit, in CI and in thea verify, anything but PASS is refused, every verdict is kept
+  subgraph ask [1 · plug in]
+    direction LR
+    A([any agent<br>or chat]) --> I[CLI · MCP<br>hooks] --> D[(atlas.yaml<br>42 languages)]
   end
-  style thea fill:#f6fbf6,stroke:#2e7d32,stroke-width:2px
-  classDef stop fill:#fdecea,stroke:#c62828,color:#7f1d1d
-  classDef go fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
-  class X stop
-  class M go
+  subgraph guard [2 · guard]
+    direction LR
+    S([command]) --> W{{23<br>shapes}}
+    W -->|match| Y[refused]
+    W -->|clear| O[runs]
+    E([edit]) --> L[64 gates<br>+ lessons]
+  end
+  subgraph run [3 · prove]
+    direction LR
+    H([commit<br>PR · verify]) --> V{{exit<br>code}}
+    V -->|PASS| M[landed]
+    V -->|else| X[refused]
+  end
+  subgraph learn [4 · learn]
+    direction LR
+    Q[(field<br>ledger)] --> F[112 shapes<br>41 moves] --> N[next port<br>+ judge]
+  end
+  ask --> guard --> run --> learn
+  classDef band fill:none,stroke:#6f9f73,stroke-dasharray:4 3
+  class ask,guard,run,learn band
+  classDef stop fill:#f6d5d2,stroke:#c0605a,color:#5c1410
+  classDef go fill:#cfe9d2,stroke:#4f9a58,color:#103d17
+  classDef store fill:#d6e4f5,stroke:#5f86b8,color:#0d2a4d
+  class X,Y stop
+  class M,O go
+  class D,Q,V,W store
 ```
 <!-- END generated: proof-flow -->
 
@@ -93,7 +100,7 @@ $ thea gate scripts/doctor.py
 ```
 <!-- END generated: gate-example -->
 
-**Not** an app framework, a runtime optimizer or a sandbox.
+**Not** an app framework or a runtime optimizer.
 
 ## Quickstart
 
@@ -113,16 +120,16 @@ thea gate scripts/doctor.py   # what proves a change
 thea verify                   # exit 0 only if all PASS
 ```
 
-Read-only MCP: `thea-mcp`. Other repos: [CONSUMING](docs/CONSUMING.md) · runtimes: [models](models/README.md).
+Read-only MCP: `thea-mcp`. Other repos: [CONSUMING](docs/CONSUMING.md).
 
 <!-- BEGIN generated: port-example (python scripts/atlas.py index --write) -->
 ```console
 $ thea port scripts/doctor.py --line
 ◉ scripts/doctor.py │ ⠟backend │ python │ ⌂scripts │ ✓3 │ ⚠1 │ → thea gate scripts/doctor.py
 $ thea port scripts --line
-◎ scripts │ ⠟93 │ ⌂scripts │ → thea brainstorm
+◎ scripts │ ⠟99 │ ⌂scripts │ → thea brainstorm
 $ thea port . --line
-○ . │ ⠟120 ⠿4 ⠁3 │ → thea check
+○ . │ ⠟126 ⠿4 ⠁3 │ → thea check
 ```
 <!-- END generated: port-example -->
 
@@ -132,14 +139,14 @@ Recorded runs, each naming its instrument: evidence for routing and refusals, no
 task success ([limits](docs/CERTIFICATION.md#what-the-numbers-do-not-prove)).
 
 <!-- BEGIN generated: measured-benefits (python scripts/atlas.py index --write) -->
-*With Thea*: the model is shown what `thea gate` prints for the file. *Blind*: it gets only the list
-of language names. Token savings are against the usual alternative: pasting in every language's tool list.
+*With Thea*: the model sees what `thea gate` prints. *Blind*: only the language names. Token savings
+compare against pasting every language's tool list.
 
 **On Claude** (76 questions per model, `abtest.py` v3.49.0)
 - **Opus:** 100% right with Thea, 41% blind; reads 90% fewer tokens.
 - **Sonnet:** 100% right with Thea, 39% blind; reads 90% fewer tokens.
 - **Haiku:** 100% right with Thea, 39% blind; reads 91% fewer tokens.
-- **Claude Code start-up:** loads `CLAUDE.md` and its imports, 1,049 tokens.
+- **Claude Code start-up:** loads `CLAUDE.md` and its imports, 1,053 tokens.
 
 **Beyond routing** (blind → with Thea, `taskbench.py` v2.29.0)
 - **Name a failure from its symptom:** Opus 93% → 100%; Sonnet 57% → 100%; Haiku 64% → 96%.
@@ -149,17 +156,18 @@ of language names. Token savings are against the usual alternative: pasting in e
 
 **Across all 11 models tested** (5 providers, 2,409 questions, `abtest.py` v2.27.0 / v2.28.0 / v3.49.0)
 - **Right answers:** 99% (95% interval 98–99%) with Thea, 59% (95% interval 55–63%) blind; every model 97–100% with Thea. A random guess scores 2.8%.
-- **Tokens:** reads 89% fewer than pasting every tool list, and 51% fewer than asking blind.
+- **Tokens:** 89% fewer than pasting every tool list, 51% fewer than blind.
 
 **The repository itself** (recomputed on every build)
-- **Before routing:** an agent reads 1,729 tokens. The other 194 documents (703 KiB) load only when a route names one.
-- **Coverage:** all 324 language × check pairs answer — 133 with a command, 191 with a declared *no tool*, 0 silently.
-- **Mistakes caught:** 465 kinds are planted in the tests, and each must be refused.
-- **Enforced at commit:** refused 17 of 17 planted breaks in 12 languages; 11 files untested here (`enforce.py`, v3.6.0).
-- **Agent-to-agent handoffs with the right checks** (schema alone → with Thea): Opus 0/6 → 6/6; Sonnet 0/6 → 6/6; Haiku 0/6 → 6/6 (`workflowbench.py`).
-- **Solo commits:** 24/24 clean with or without the hook on these tasks; a planted broken commit is refused.
-- **Agent controls that block, not warn:** narrow_tools, sandbox, budget, approval, effects, audit.
-- **Install:** 8 KiB, 1 module, 1 dependency — 1 in total with its own dependencies.
+- **1,734** tokens read before routing; the other 205 documents (626 KiB) load only when a route names one.
+- **378** language × check pairs (42 languages × 9 checks), all answered: 143 with a command, 235 with a declared *no tool*, 0 silently.
+- **497** mistake kinds planted in the tests, each refused.
+- **17/17** planted breaks refused at commit, in 12 languages; 15 files untested (`enforce.py`, v3.53.0).
+- **18/18** agent-to-agent handoffs carry the right checks with Thea (schema alone → with Thea): Opus 0/6 → 6/6; Sonnet 0/6 → 6/6; Haiku 0/6 → 6/6 (`workflowbench.py`).
+- **24/24** solo commits clean with or without the hook on these tasks; a planted broken commit is refused.
+- **112** failure shapes in the ledger: 196 sightings, 45 recurred; 93 guarded.
+- **6** agent controls that block, not warn: narrow_tools, sandbox, budget, approval, effects, audit.
+- **10 KiB** install: 1 module, 1 dependency — 1 in total with its own dependencies.
 <!-- END generated: measured-benefits -->
 
 ## For agents
@@ -174,16 +182,17 @@ of language names. Token savings are against the usual alternative: pasting in e
 
 ## Counts, computed
 
-Every number on this page is generated from the tree on each build, and `check` fails when one drifts.
+Every number here is generated on each build; `check` fails when one drifts. Sites and dashboards
+read the same figures from [.agent/facts.json](.agent/facts.json).
 
 <!-- BEGIN generated: repository-facts (python scripts/atlas.py index --write) -->
-- **contract version:** 3.53.0 — `VERSION`, asserted at a declared line in 7 other files
-- **tool manifests:** 36 — `languages/<route>/tools.yaml`, validated against `tools/tools.schema.json`
-- **declared tool entries:** 373 — distinct entries per manifest, summed; `packprobe.py` classifies every one
-- **entry kinds:** 5 — `tools/tools.schema.json` `$defs.entry.x-kinds`
-- **verification gate classes:** 8 — `atlas.yaml/verification_policy/profiles`
-- **task profiles:** 14 — `atlas.yaml/task_profiles`
-- **python files in the harness:** 92 — `scripts/*.py`, all linted by ruff
+- **3.53.0** contract version — `VERSION`, asserted at a declared line in 7 other files
+- **42** tool manifests — `languages/<route>/tools.yaml`, validated against `tools/tools.schema.json`
+- **401** declared tool entries — distinct entries per manifest, summed; `packprobe.py` classifies every one
+- **5** entry kinds — `tools/tools.schema.json` `$defs.entry.x-kinds`
+- **8** change classes (verification profiles) — `atlas.yaml/verification_policy/profiles`
+- **14** task profiles — `atlas.yaml/task_profiles`
+- **98** python files in the harness — `scripts/*.py`, every one held by the `lint` · `format` · `typecheck` gates
 <!-- END generated: repository-facts -->
 
 ## Find your way

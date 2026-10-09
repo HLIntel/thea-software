@@ -2,10 +2,9 @@
 """The guards added at 2.27.0-2.28.0, split out of atlas_test.py to keep it under the shape cap. Named *_test.py because it IS a
 test harness, and the loader-bypass guard exempts test harnesses by that convention.
 
-Each case plants a defect and asserts the contract refuses it, exactly as the cases in
-atlas_test.py do, and registers into ITS counted CASES — which is why run() takes the running
-module rather than importing atlas_test: run as a script that module is __main__, and a fresh
-`import atlas_test` would be a second copy whose cases nobody counts.
+Each case plants a defect and asserts the contract refuses it, exactly as the cases in atlas_test.py do, and registers
+into ITS counted CASES — which is why run() takes the running module rather than importing atlas_test: run as a script
+that module is __main__, and a fresh `import atlas_test` would be a second copy whose cases nobody counts.
 """
 from __future__ import annotations
 
@@ -17,11 +16,12 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any, cast
 
 import atlas_rules_test
 import safeedit
 
-T = None  # the running atlas_test module, bound by run()
+T: Any = None  # the running atlas_test module, bound by run()
 
 
 def run(module) -> None:
@@ -63,7 +63,7 @@ def run(module) -> None:
     delegation_cases()
     ledger_entry_cases()
     lock_drift_cases()
-    for planted in ("handoff_test", "schedtargets_test", "shell_test", "judge_test", "agents_test", "identity_test", "floor_test", "model_test", "consumer_test", "shebang_test", "vanish_test", "fetch_test", "signature_test"):
+    for planted in ("handoff_test", "schedtargets_test", "shell_test", "judge_test", "agents_test", "identity_test", "floor_test", "model_test", "consumer_test", "shebang_test", "vanish_test", "fetch_test", "signature_test", "deps_test", "facts_test", "artifact_edges_test", "bounds_test", "upstream_test"):
         __import__(planted).run(module)
     landing_target_cases()
     consumer_gate_cases()
@@ -349,8 +349,8 @@ def cloudflare_cases() -> None:
         route, rule, _ = route_with_evidence(f"examples/cloudflare/{name}")
         assert (route, rule) == ("cloudflare", "project_manifest"), f"{name} routed to {route} by {rule}"
     route, rule, _ = route_with_evidence("tsconfig.json")
-    assert route is None, f"an unrelated .json was captured by the filename rule: {route} by {rule}"
-    argv, _ = gate_command("cloudflare", "compiler_or_typechecker")
+    assert (route, rule) == ("json", "artifact_extension"), f"unrelated .json misrouted: {route} by {rule}"
+    argv = cast(list[str], gate_command("cloudflare", "compiler_or_typechecker")[0])
     assert argv[:3] == ["wrangler", "deploy", "--dry-run"] and "--config" in argv, f"the build gate is {argv}"
     assert "deploy" not in " ".join(gate_command("cloudflare", "unit_tests")[0] or []), "a test gate deploys"
     CASES.append(("cloudflare: wrangler.{toml,json,jsonc} route by filename; the build gate is a dry run",
@@ -537,7 +537,7 @@ def declaration_cases() -> None:
         ("an issue route naming an undeclared word FAILS", "a typo read as a topic",
          "  memory: [rust, c, cpp, zig, nim, hare, odin]\n", "  memory: [rust, rsut, c, cpp, zig, nim, hare, odin]\n", "names 'rsut'", 'inv:declarations_are_read'),
         ("a model route naming a host FAILS", "a host listed as a model",
-         "  architecture: [claude, openai_codex]\n", "  architecture: [claude, openai_codex, multica]\n", "a host is not a model", 'inv:declarations_are_read'),
+         "  vscode: interactive_ide_agent_host\n", "  vscode: multi_agent_host\n", "a host is not a model", 'inv:declarations_are_read'),
         ("a front_end read split on a comma FAILS", "a declaration half missing once loaded",
          '  reads:\n  - "thea-commands/1 (the roster)"\n',
          "  reads: [tools/atlas-output.schema.json (route, gate)]\n  reads_was:\n  - thea-commands/1\n",
@@ -644,10 +644,10 @@ def measurable_cases() -> None:
                              "atlas.yaml": "# dead runs here\nkey: v\n"})
     if found != ["a.dead"]:
         raise SystemExit(f"FAIL orphans misreads callers: {found}")
-    listed = thea_mcp.handle({"id": 1, "method": "resources/list"})["result"]["resources"]
-    read = thea_mcp.handle({"id": 2, "method": "resources/read", "params": {"uri": "thea://atlas/processes"}})
-    bad = thea_mcp.handle({"id": 3, "method": "resources/read", "params": {"uri": "thea://atlas/nope"}})
-    prompt = thea_mcp.handle({"id": 4, "method": "prompts/get", "params": {"name": "plan-change", "arguments": {"path": "x.py"}}})
+    listed = cast(Any, thea_mcp.handle({"id": 1, "method": "resources/list"}))["result"]["resources"]
+    read = cast(Any, thea_mcp.handle({"id": 2, "method": "resources/read", "params": {"uri": "thea://atlas/processes"}}))
+    bad = cast(Any, thea_mcp.handle({"id": 3, "method": "resources/read", "params": {"uri": "thea://atlas/nope"}}))
+    prompt = cast(Any, thea_mcp.handle({"id": 4, "method": "prompts/get", "params": {"name": "plan-change", "arguments": {"path": "x.py"}}}))
     if not listed or "processes:" not in read["result"]["contents"][0]["text"] or "error" not in bad \
             or "thea steps x.py" not in prompt["result"]["messages"][0]["content"]["text"]:
         raise SystemExit("FAIL the MCP route does not serve atlas sections and prompts, or serves an unknown one")
@@ -685,7 +685,7 @@ def commit_behaviour_cases() -> None:
         good, bad = Path(work) / "test_good.py", Path(work) / "test_bad.py"
         good.write_text("def test_a():\n    assert True\n")
         bad.write_text("def test_a():\n    assert False\n")
-        verdicts = (enforce.test_file(good), enforce.test_file(bad), enforce.test_file(ROOT / "scripts/doctor.py"))
+        verdicts = cast(Any, (enforce.test_file(good), enforce.test_file(bad), enforce.test_file(ROOT / "scripts/doctor.py")))
     if not _shutil_which("pytest"):
         print("        commit-time test probe: NOT RUN (no pytest on this machine)")
         return
@@ -758,7 +758,7 @@ def public_surface_cases() -> None:
 
 def role_cases() -> None:
     """A role runs under a declared profile, and resume always names one next action (3.19.0)."""
-    with mutated("atlas.yaml", lambda s: s.replace("  reviewer: {task_profile: default,", "  reviewer: {task_profile: reviewing,", 1)):
+    with mutated("atlas.yaml", lambda s: s.replace("  reviewer: {writes: false, task_profile: default,", "  reviewer: {writes: false, task_profile: reviewing,", 1)):
         case("a role under an undeclared task profile FAILS declarations_are_read", "a role switch that is scope drift wearing a name",
              True, "runs under task profile 'reviewing'", by='inv:declarations_are_read')
     with mutated("pyproject.toml", lambda s: s.replace('Issues = "', 'Homepage = "x"\nIssues = "', 1)):

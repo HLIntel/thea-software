@@ -26,6 +26,7 @@ GENERATED from atlas.yaml/agent_failure_modes. `thea` = about Thea's own code.
 - `a_wait_that_matches_itself` (any): the job's output file already holds its final line while the wait loop keeps sleeping
 - `a_check_satisfied_by_a_rendering` (any): the navigation line names an old version, and the check passes because a generated table in the same file carries the new one
 - `a_non_answer_scored_as_wrong` (any): a blind arm scores near zero on a yes/no question, below a coin flip, because the model declined to guess
+- `a_suite_that_writes_the_owners_state` (any): a ledger or registry under the owner's home holding a planted fixture's name, or one session re-firing the same refusal shape dozens of times
 - `a_turn_spent_rewording_instead_of_building` (any): a ratchet breach fixed by trimming and re-running the check, once per sentence, until it passes
 - `a_read_only_audit_that_ran_a_mutating_suite` (any): an agent told to read only ran the planted suite in a worktree another session was editing
 - `a_second_declaration_of_one_value` (any): the same constant is written in two files, and after one edit they hold different values
@@ -87,6 +88,7 @@ GENERATED from atlas.yaml/agent_failure_modes. `thea` = about Thea's own code.
 - `a_credential_typed_into_a_command` (any): a known credential prefix (a KGAT, ghp, sk or AKIA token) appears inside the command text itself rather than as a variable name
 - `a_first_idea_argued_as_the_only_option` (any): the plan names no option it rejected, no signal that would make it wrong, and no one who approved an irreversible step
 - `a_command_handed_over_with_an_assumed_path` (any): no such file or directory on a path the author inferred from a convention, never listed on that machine
+- `a_shell_override_bypasses_audit_shebang` (any): the audit names its required interpreter and rejects the supplied shell before any target observation
 - `a_guard_that_passes_when_its_input_is_missing` (any): delete the input and run the guard: it still exits 0
 - `a_window_declared_past_what_the_lane_serves` (any): per-turn input tokens rise monotonically across the session and no compaction event appears in the log
 - `a_stream_delta_missing_its_identity` (any): the raw stream shows a tool_call delta with an empty or absent id
@@ -107,6 +109,8 @@ GENERATED from atlas.yaml/agent_failure_modes. `thea` = about Thea's own code.
 - `an_artifact_written_that_nothing_reads` (thea): grep finds the file in the generator and in no reader
 - `a_passed_verdict_recomputed_on_identical_content` (any): the refused land's tree hash equals the tree whose suite passed minutes ago
 - `a_negative_control_built_from_matchable_words` (any): the noise probe returns a real row, and that row was added in the same change
+- `a_home_folder_that_is_a_repository` (thea): the home folder has a .git entry
+- `a_blocked_listing_read_as_absence` (thea): the same listing without the redirect says "Operation not permitted"
 - `a_screenshot_for_layout_check` (any): a session transcript with several full-scale screenshots of one page between edits, and no read_page, get_page_text or javascript_tool call measuring scrollWidth, a bounding rect or a computed style
 - `a_contract_generalized_from_one_instance` (any): running the claimed contract in each member finds it in one
 - `an_env_secret_passed_as_argument` (any): the command line contains NAME=value for a credential-bearing name

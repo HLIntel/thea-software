@@ -170,6 +170,13 @@ GENERATED from atlas.yaml/agent_failure_modes, most-sighted first.
 - tell: a blind arm scores near zero on a yes/no question, below a coin flip, because the model declined to guess
 - do instead: score returns None for a non-answer, and a run holding any None is refused
 
+## a_suite_that_writes_the_owners_state
+
+- shape: a test harness that inherits the owner's state directory, so every planted refusal, verify and session lands in the record the README counts as use
+- looks like: busy real usage; it is the suite's own plants
+- tell: a ledger or registry under the owner's home holding a planted fixture's name, or one session re-firing the same refusal shape dozens of times
+- do instead: the planted suite pins THEA_HOME to its own temporary directory at start, and a planted case refuses when the ledger path resolves under the owner's home
+
 ## a_turn_spent_rewording_instead_of_building
 
 - shape: an agent treating a failing cap as a writing exercise — cut a phrase, re-measure, repeat — instead of reading what the check names and building the fix once
@@ -597,6 +604,13 @@ GENERATED from atlas.yaml/agent_failure_modes, most-sighted first.
 - tell: no such file or directory on a path the author inferred from a convention, never listed on that machine
 - do instead: resolve paths inside the command (`thea --where`, `git -C "$(...)"`, a search) or name only paths seen on that machine
 
+## a_shell_override_bypasses_audit_shebang
+
+- shape: an agent runs an audit through a shell other than its declared interpreter, so shell-specific syntax aborts before the audit observes its target
+- looks like: a closing audit command that exits nonzero without reporting its intended verdict
+- tell: the audit names its required interpreter and rejects the supplied shell before any target observation
+- do instead: execute an audit directly so its shebang selects the interpreter; use an explicit interpreter only after reading the script header
+
 ## a_guard_that_passes_when_its_input_is_missing
 
 - shape: a guard answers a MISSING input the way it answers a clean one — `if not path.exists(): continue` or `return []` — so deleting, renaming or never creating the file it checks turns the guard green
@@ -736,6 +750,20 @@ GENERATED from atlas.yaml/agent_failure_modes, most-sighted first.
 - looks like: a suite that dies minutes in on a probe that was never about the change
 - tell: the noise probe returns a real row, and that row was added in the same change
 - do instead: a noise probe is tokens no ledger can hold, never words; lesson_flow_cases asserts it returns nothing
+
+## a_home_folder_that_is_a_repository
+
+- shape: the home folder holds a .git (a clone of a public repository with an unborn branch and no tracked files), so every folder under home that is not its own repository resolves its top level to home, and its worktrees hang off that hidden .git
+- looks like: `git rev-parse --show-toplevel` in a tool-config folder prints the home folder instead of failing, and `git status` there lists the whole home tree as untracked
+- tell: the home folder has a .git entry; `git worktree list` from a worktree names the home folder as the main tree with HEAD 0000000
+- do instead: thea shell refuses `git init` and `git clone` into the home folder. To repair: check every worktree for uncommitted work and landed state, `mv ~/.git ~/Projects/<name>.git`, set core.bare true, then `git worktree repair`. With extensions.worktreeConfig on, the shared core.bare=true leaks into every worktree (exit 128 "must be run in a work tree"), so each worktree also needs core.bare false in its own config.worktree; `git branch -d` then judges merged against the unborn HEAD, so confirm with `merge-base --is-ancestor <b> origin/main` before `-D`
+
+## a_blocked_listing_read_as_absence
+
+- shape: an agent hunts for directories a sweep stopped listing and lists the Trash with stderr discarded; macOS privacy control denies the listing, the error goes to /dev/null, the empty output reads as "not there", and the agent reports repositories lost that a sibling session had moved there on the owner's instruction
+- looks like: `ls -l ~/.Trash 2>/dev/null` prints `total 0` and the report says the missing repositories are in no archive and not in the Trash
+- tell: the same listing without the redirect says "Operation not permitted"; `[ -d <exact path> ]` finds the directory
+- do instead: thea shell refuses a listing or search of the Trash whose stderr is discarded; probe an exact path with `[ -d ]` or ask the session that moved it. A recursive delete of a repository-level directory is refused too, so a removed repository is always a move into ~/Projects/_archives or the Trash, and absence is never inferred from a listing
 
 ## a_screenshot_for_layout_check
 

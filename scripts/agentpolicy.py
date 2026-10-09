@@ -28,7 +28,7 @@ import shlex
 import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple, cast
 
 from atlascore import ROOT, atlas, read, route_targets, strict_yaml
 from packmanifest import entry_commands, manifest_schema, validate
@@ -132,7 +132,7 @@ def effective_budgets(contract: dict) -> dict[str, int]:
     return {name: min(int(ceiling), int(asked.get(name, ceiling))) for name, ceiling in ceilings.items()}
 
 
-def _prefixed(path: str, prefixes: object) -> str | None:
+def _prefixed(path: str, prefixes: Any) -> str | None:
     """The first prefix covering `path`, or None. A prefix covers itself and its children only."""
     for prefix in prefixes or []:
         text = str(prefix).rstrip("/")
@@ -161,6 +161,10 @@ def path_verdict(contract: dict, candidate: str, mode: str = "write") -> Verdict
     forbidden = _prefixed(inside, contract.get("forbidden_paths"))
     if forbidden:
         return Verdict(False, "sandbox", f"{inside} is under forbidden_paths/{forbidden}")
+    role = str(contract.get("agent_role") or "")
+    if mode == "write" and ((atlas().get("agent_roles") or {}).get(role) or {}).get("writes") is False:
+        return Verdict(False, "sandbox", f"{inside} is a write, and agent_roles/{role} writes nothing — "
+                                         "a reviewer that edits what it reviews has graded its own work")
     allowed = _prefixed(inside, contract.get("allowed_paths"))
     if not allowed:
         return Verdict(False, "sandbox", f"{inside} is under no allowed_paths prefix ({mode})")
@@ -276,6 +280,28 @@ def _row_applies(row: dict, cmd: str, platform: str) -> bool:
     return True
 
 
+def _row_judges(row: dict, cmd: str) -> str:
+    """The text a row's pattern judges: `cmd` with every match of its `cleared_by` blanked — the safe form
+    of the shape, e.g. a discard chained straight after the `git stash create` that backs it up."""
+    return re.sub(str(row["cleared_by"]), " ", cmd) if row.get("cleared_by") else cmd
+
+
+# The shapes decided in CODE rather than by an atlas.yaml/agent_policy/shell_shapes row — the three in
+# shellsplit.pipeline_refusal and the substituted backtick — each keyed by how its reason opens, so
+# shell_test can prove the list matches what refuses and the count is derived, never typed.
+CODED_SHELL_SHAPES = {
+    "a sourced first stage": "a sourced file in a pipeline",
+    "$? after a text filter": "`$?` after a pipeline",
+    "a verdict piped into a filter": "a verdict piped into",
+    "a substituted backtick": "a backtick inside",
+}
+
+
+def shell_shape_count() -> int:
+    """Every silent shape shell_verdict refuses: the coded ones plus each declared row. One figure for every reader."""
+    return len(CODED_SHELL_SHAPES) + len(policy().get("shell_shapes") or [])
+
+
 def shell_verdict(cmd: str, platform: str = sys.platform) -> Verdict:
     """Refuse a shell string whose VERDICT or EFFECT is not the one its writer will read.
 
@@ -285,7 +311,7 @@ def shell_verdict(cmd: str, platform: str = sys.platform) -> Verdict:
 
     WHAT IT PROVES. Each shape measured, each SILENT when it fires: `.`/`source` as a pipeline's first stage
     (exports die in the subshell); `$?` right after a text filter, or a verdict piped into one, without
-    `pipefail`; a backtick in a double-quoted `-m`; every atlas.yaml/agent_policy/shell_shapes row — `pgrep -f`
+    `pipefail`; a backtick in any double-quoted string or unquoted heredoc body; every atlas.yaml/agent_policy/shell_shapes row — `pgrep -f`
     on itself, a dash literal to print, an untrack, a bare pull, git that destroys work or hangs (3.49.0).
     The pipeline shapes are judged per top-level statement with heredoc bodies removed (3.50.0).
 
@@ -299,17 +325,69 @@ def shell_verdict(cmd: str, platform: str = sys.platform) -> Verdict:
     refusal = pipeline_refusal(statements, "pipefail" not in cmd and "PIPESTATUS" not in cmd)
     if refusal is not None:
         return Verdict(False, "audit", refusal)
-    message = re.search(r'-m\s+"([^"]*)"', cmd)
-    if message and "`" in message.group(1):
+    where = _substituted_backtick(cmd)
+    if where:
         return Verdict(False, "audit",
-                       "a backtick inside the double-quoted -m value is command substitution: the "
-                       "shell runs it and substitutes its output, usually empty, so the text is GONE "
-                       "from the message and nothing warns. Use a quoted heredoc")
+                       f"a backtick inside {where} is command substitution: the shell runs it and "
+                       "substitutes its output, usually empty, so the text is GONE and nothing warns. "
+                       "Use single quotes or a quoted heredoc (<<'EOF')")
     for row in policy().get("shell_shapes") or []:  # the regex-decided shapes are DATA, one row per sighting
-        if re.search(str(row["pattern"]), cmd) and _row_applies(row, cmd, platform):
+        if re.search(str(row["pattern"]), _row_judges(row, cmd)) and _row_applies(row, cmd, platform):
             return Verdict(False, "audit", str(row["reason"]))
-    return Verdict(True, "audit", f"{len(statements)} statement(s): none of the {4 + len(policy().get('shell_shapes') or [])} silent shapes")
+    return Verdict(True, "audit", f"{len(statements)} statement(s): none of the {shell_shape_count()} silent shapes")
 
+
+
+def _heredoc_bodies(cmd: str, start: int, pending: list[tuple[str, bool]]) -> tuple[int, bool]:
+    """Skip the heredoc bodies queued before the newline at `start - 1`; True if an unquoted one holds a backtick."""
+    for delim, raw in pending:
+        end = re.search(rf"^\t*{re.escape(delim)}$", cmd[start:], re.M)
+        stop = start + end.start() if end else len(cmd)
+        if raw and re.search(r"(?<!\\)`", cmd[start:stop]):
+            return stop, True
+        start = start + end.end() + 1 if end else len(cmd)
+    return start, False
+
+
+def _quote_step(cmd: str, i: int, quote: str, outer: list[str]) -> tuple[str, int]:
+    """The quote state after cmd[i] and how far it moves: an escape skips one character, `$(` opens an unquoted context."""
+    c = cmd[i]
+    if quote == "'":
+        return ("" if c == "'" else quote), 1
+    if c == "\\":
+        return quote, 2
+    if cmd.startswith("$(", i):
+        outer.append(quote)
+        return "", 2
+    if c == ")" and not quote and outer:
+        return outer.pop(), 1
+    if c == '"' or (c == "'" and not quote):
+        return ("" if quote else c), 1
+    return quote, 1
+
+
+def _substituted_backtick(cmd: str) -> str | None:
+    """Where an unescaped backtick is substituted though it reads as text: a double-quoted string of any
+    flag (-m, --body, --title=…), or an UNQUOTED heredoc body. A bare one outside quotes is deliberate;
+    `$(` opens a fresh unquoted context, so "$(cat <<'EOF' … EOF)" stays the sanctioned form."""
+    quote, i, pending, outer = "", 0, [], []
+    while i < len(cmd):
+        if cmd[i] == "\n" and pending and quote != "'":
+            i, hit = _heredoc_bodies(cmd, i + 1, pending)
+            if hit:
+                return "an unquoted heredoc body"
+            pending = []
+            continue
+        if cmd[i] == "`" and quote == '"':
+            return "a double-quoted string"
+        doc = None if quote else re.match(r"<<-?[ \t]*(['\"]?)([\w.-]+)\1", cmd[i:])
+        if doc:
+            pending.append((doc.group(2), not doc.group(1)))
+            i += doc.end()
+            continue
+        quote, step = _quote_step(cmd, i, quote, outer)
+        i += step
+    return None
 
 
 def budget_verdict(contract: dict, projected: dict) -> Verdict:
@@ -747,7 +825,7 @@ def claim_errors() -> list[str]:
         errors.append("tool_claims must begin at 'declared': a rung below the one a manifest "
                       "actually makes would be asserted by every pack for free")
     for manifest in sorted((ROOT / "languages").rglob("tools.yaml")):
-        data = strict_yaml(manifest.read_text(encoding="utf-8"), str(manifest))
+        data = cast("dict[str, Any] | None", strict_yaml(manifest.read_text(encoding="utf-8"), str(manifest)))
         claimed = str(((data or {}).get("verification") or {}).get("status") or "")
         if not claimed:
             continue

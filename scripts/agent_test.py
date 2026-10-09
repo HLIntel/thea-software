@@ -19,10 +19,19 @@ import json
 import subprocess
 import sys
 import tempfile
+from email.message import Message
 from pathlib import Path
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _hdrs(**h: str) -> Message:
+    m = Message()
+    for k, v in h.items():
+        m[k.replace("_", "-")] = v
+    return m
+
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import agentaudit
@@ -30,6 +39,7 @@ import agenteffects
 import agentpolicy
 import agentrun
 import atlascore
+import declcheck
 import resilience
 import thealang
 
@@ -69,6 +79,16 @@ def sandbox_cases(contract: dict) -> None:
             agentpolicy.path_verdict({**contract, "allowed_paths": ["docs"]}, "docs/MODEL.md"), "sandbox")
     check("sandbox allows a planned path", "a control so strict it refuses the task it was written for",
           agentpolicy.path_verdict(contract, "scripts/doctor.py").allowed)
+    refuses("sandbox refuses a write by a role that writes nothing",
+            "a reviewer editing the code under review: may_not as prose, with allowed_paths granting it",
+            agentpolicy.path_verdict({**contract, "agent_role": "reviewer"}, "scripts/doctor.py"), "sandbox")
+    roles = {**atlascore.atlas(), "agent_roles": {**atlascore.atlas()["agent_roles"],
+             "reviewer": {**atlascore.atlas()["agent_roles"]["reviewer"], "writes": "no"}}}
+    with mock.patch.object(declcheck, "atlas", return_value=roles):
+        check("a role whose writes is not a boolean is refused", "writes: 'no' silently granting every write",
+              any("writes is 'no'" in e for e in declcheck.role_errors()))
+    check("sandbox lets a read-only role read its scope", "a role bound so tight it cannot read what it reviews",
+          agentpolicy.path_verdict({**contract, "agent_role": "reviewer"}, "scripts/doctor.py", "read").allowed)
 
 
 def command_cases(contract: dict) -> None:
@@ -407,7 +427,7 @@ def resilience_cases() -> None:
 
     def refused():
         calls.append(1)
-        raise urllib.error.HTTPError("u", 401, "no", {}, None)
+        raise urllib.error.HTTPError("u", 401, "no", _hdrs(), None)
     check("a terminal failure is raised on first sight, never retried",
           "retrying a 401 until the account is locked", raised(lambda: rz.call(
               refused, attempts=5, base=0.1, cap=1, deadline=60, sleep=slept.append),
@@ -417,7 +437,7 @@ def resilience_cases() -> None:
     breaker = rz.Breaker(threshold=2, cooldown=30, clock=lambda: now[0])
 
     def paid():
-        raise urllib.error.HTTPError("u", 402, "budget", {}, None)
+        raise urllib.error.HTTPError("u", 402, "budget", _hdrs(), None)
     raised(lambda: rz.call(paid, attempts=3, base=0.1, cap=1, deadline=60, breaker=breaker,
                            sleep=slept.append), urllib.error.HTTPError)
     now[0] = 10_000.0  # far past any cooldown
@@ -444,7 +464,7 @@ def resilience_cases() -> None:
           f"opened={opened} tried={tried} half={half} final={breaker.state}")
 
     slept.clear()
-    asked = [urllib.error.HTTPError("u", 429, "slow", {"Retry-After": "7"}, None)]
+    asked = [urllib.error.HTTPError("u", 429, "slow", _hdrs(Retry_After="7"), None)]
 
     def limited():
         if asked:
@@ -464,7 +484,7 @@ def resilience_cases() -> None:
           min(draws) >= 0.5 and max(draws) <= 8.0 and len({round(d, 3) for d in draws}) > 100)
 
     slept.clear()
-    greedy = [urllib.error.HTTPError("u", 503, "busy", {"Retry-After": "50"}, None)]
+    greedy = [urllib.error.HTTPError("u", 503, "busy", _hdrs(Retry_After="50"), None)]
     check("the wall deadline bounds total sleep: a wait past it is refused, not slept",
           "a retry loop bounded in attempts and unbounded in time",
           raised(lambda: rz.call(lambda: (_ for _ in ()).throw(greedy[0]), attempts=5, base=0.1,
@@ -715,7 +735,7 @@ def main() -> int:
     provider_cases()
     import agent_properties_test
     agent_properties_test.run(sys.modules[__name__])
-    expected = 120
+    expected = 123
     if len(CASES) != expected:
         raise SystemExit(f"CASE COUNT MOVED: {len(CASES)} ran, {expected} expected — a harness that "
                          "silently skips cases prints a full pass over controls that never fired")

@@ -45,7 +45,6 @@ def run(module) -> None:
     vaultlinks_cases()
     markdown_cases()
     lesson_flow_cases()
-    private_terms_cases()
     port_cases()
     brainstorm_cases()
     intake_prompt_cases()
@@ -208,6 +207,10 @@ def plant_anchor_cases() -> None:
         case("a regex that locates a plant and matches nothing FAILS before the suite runs",
              "a clean check followed by a suite that dies on AttributeError: NoneType has no group",
              True, "matches NOTHING in atlas.yaml", by='inv:plants_can_still_apply')
+    row = ("scripts/atlas_rules_test.py", "atlas.yaml", DECLARATION_PLANTS[1][1])  # module table, file in the row
+    if row not in rows:
+        raise SystemExit(f"FAIL plantcheck misses a module-level table row that names its file: {row}")
+    CASES.append(("plantcheck reads a module-level table row that names its file", "routes: 36 outliving its text"))
 def callshape_cases() -> None:
     """Every forbidden_calls row bites, no row is unprobed, and correct calls are untouched (3.31.0).
 
@@ -314,7 +317,6 @@ def own_enforcement_cases() -> None:
     quiet = {
         "a document whose directory routes to a language": ("docs/PYTHON.md", "not declared source"),
         "a language pack's own README": ("languages/rust/README.md", "not declared source"),
-        "a pack's tools declaration": ("languages/python/tools.yaml", "not declared source"),
         "a planted benchmark fixture, whose failing test IS the artifact":
             ("benchmarks/agent/window/test_window.py", "planted failure by declaration"),
     }
@@ -322,6 +324,10 @@ def own_enforcement_cases() -> None:
         state, detail = enforce.check_file(ROOT / target)
         if state != "SKIP" or needle not in detail:
             raise SystemExit(f"FAIL enforce fires on correct content: {name} -> {state} {detail}")
+    # A pack's tools.yaml IS yaml source since the yaml route (3.53.0): its parser decides, never refuses.
+    state, detail = enforce.check_file(ROOT / "languages/python/tools.yaml")
+    if state == "FAIL":
+        raise SystemExit(f"FAIL enforce fires on correct content: a pack's tools declaration -> {detail}")
     CASES.append((f"the enforcement rung skips {len(quiet)} correct files it used to refuse",
                   "a rung that feeds a README to a compiler because the directory routes to a language "
                   "— which is why it was wired into no hook at all"))
@@ -591,11 +597,11 @@ def surface_cases() -> None:
     print("  ok    the round trip catches a printer that forgets a field")
 
 
-# (file, find, replace, case name, defect killed, needle). ONE table, ONE loop: two copy-pasted `with mutated(...)`
+# (file, find, replace, case name, defect killed, needle, rule). ONE table, ONE loop: two copy-pasted `with mutated(...)`
 # functions were refused by the structure gate as one shape twice — a case list is data, not duplicated code.
-DECLARATION_PLANTS: list[tuple[str, str, str, str, str, str]] = [
-    ("atlas.yaml", "    routes: 36\n", "    routes: 37\n", "a surface line above the measured route count FAILS as stale",
-     "a frozen surface with headroom, which absorbs the next route", "against a stale declaration of 37", 'contextcost.example_coverage_errors'),
+DECLARATION_PLANTS: list[tuple[str, str, str, str, str, str, str | tuple[str, str]]] = [
+    ("atlas.yaml", "    routes: 42\n", "    routes: 43\n", "a surface line above the measured route count FAILS as stale",
+     "a frozen surface with headroom, which absorbs the next route", "against a stale declaration of 43", 'contextcost.example_coverage_errors'),
     ("atlas.yaml", "    instruments: 82\n", "    instruments: 81\n", "an instrument beyond the frozen surface FAILS",
      "breadth added past the freeze while every other gate stays green", "the ratchet only falls", 'contextcost.example_coverage_errors'),
     ("atlas.yaml", "    traps: [a_validator_that_diverges_from_its_spec, a_round_trip_that_drops_what_the_format_allowed]",
@@ -865,12 +871,16 @@ def markdown_cases() -> None:
         (tree / DATED).write_text("# log\n\n- second\n- third\n")  # history edited back
         _git_in(repo, "add", "-A")
         rewritten = mdshape.preservation_errors(tree, mdshape.policy(tree), None)
+        blob = _git_in(repo, "rev-parse", f":{DATED}").strip()
+        for sha in ("0" * 40, blob):  # a rewrite sanctioned for another result still refuses; this one passes
+            (tree / ".atlas.yaml").write_text(f"markdown_policy:\n  rewrites: {{{DATED}: '{sha}'}}\n")
+            rewritten += ["sanctioned"] if not mdshape.preservation_errors(tree, mdshape.policy(tree), None) else []
         (tree / DATED).write_text("# log\n\n- first\n- second\n- third\n")
         _git_in(repo, "add", "-A")
         appended = mdshape.preservation_errors(tree, mdshape.policy(tree), None)
     text = " ".join(found)
     if not ("guide.md: 3" in text and "note.md: narration" in text and "note.md: a living note no entry" in text
-            and "log-" not in text and rewritten and not appended):
+            and "log-" not in text and len(rewritten) == 2 and rewritten[-1] == "sanctioned" and not appended):
         raise SystemExit(f"FAIL markdown classes: found={found} rewritten={rewritten} appended={appended}")
     CASES.append(("a living note over its cap, struck text and an unreached note are refused; a record may grow, never be rewritten",
                   "a bloated note, a narrated one, an orphan, and history edited back — each read as a normal file"))
@@ -892,32 +902,6 @@ def lesson_flow_cases() -> None:
     CASES.append(("a file's lessons include the shapes its own guards enforce, and a place page carries each trap's move",
                   "a ledger read only when someone asks, so the design it describes repeats the failure"))
     print("  ok    the ledger reaches route, learn, decide and each place page")
-
-
-def private_terms_cases() -> None:
-    """The owner's private names are refused from a list this tree never carries (3.45.0)."""
-    import os
-
-    import leaks
-    term = "quux" + "fleetname"  # assembled, so the tree itself never contains the planted term
-    with tempfile.TemporaryDirectory() as scratch, \
-            mutated("README.md", lambda s: s.replace("public on purpose", f"public on purpose {term}", 1)):
-        terms = Path(scratch, "terms.txt")
-        terms.write_text(f"# the owner's names\n{term.upper()}\n")  # listed in another case: the match is case-blind
-        saved = os.environ.get("THEA_PRIVATE_TERMS")
-        try:
-            os.environ["THEA_PRIVATE_TERMS"] = str(terms)
-            refused = [e for e in leaks.leak_errors() if term.upper() in e]
-            os.environ.pop("THEA_PRIVATE_TERMS")
-            unset = [e for e in leaks.leak_errors() if term.upper() in e]
-        finally:
-            if saved is not None:
-                os.environ["THEA_PRIVATE_TERMS"] = saved
-    if not refused or unset:
-        raise SystemExit(f"FAIL private terms: refused={refused} unset={unset}")
-    CASES.append(("a private name in the tree is refused when the owner's untracked list names it",
-                  "the owner's projects and routers written into a public atlas, found by a reader first"))
-    print("  ok    private names are refused from a list the tree never carries")
 
 
 def ledger_enforcer_cases() -> None:
@@ -961,7 +945,8 @@ def ledger_enforcer_cases() -> None:
 
 
 def changed_edge_cases() -> None:
-    """`verify --changed` fails a diff that touches an enforcer no planted case names; a named one passes."""
+    """`verify --changed` fails a diff that touches an enforcer no planted case names; a named one passes.
+    The diff is INJECTED: reading the worktree's own failed whenever atlas.py held an uncommitted edit."""
     import inspect  # noqa: PLC0415
 
     import edges  # noqa: PLC0415
@@ -969,12 +954,10 @@ def changed_edge_cases() -> None:
     ledger.write_text('{"a case": "cross_reference_errors"}', encoding="utf-8")
     for enforcer, verdict in (("_identity_errors", "FAIL"), ("cross_reference_errors", "PASS")):
         first = inspect.getsourcelines(getattr(atlas, enforcer))[1]
-        touch = lambda t, n=first: "\n".join(ln + "  # planted" * (i == n) for i, ln in enumerate(t.split("\n"), 1))  # noqa: E731
-        with mutated("scripts/atlas.py", touch):
-            row = edges.changed_row(["scripts/atlas.py"], ledger)
+        row = edges.changed_row(["scripts/atlas.py"], ledger, lambda rel, n=first: {n} if rel == "scripts/atlas.py" else set())
         if row["verdict"] != verdict:
             raise SystemExit(f"FAIL a diff touching {enforcer} gave {row['verdict']}, expected {verdict}: {row['why']}")
-    if edges.changed_row(["scripts/atlasinv.py"], ledger)["verdict"] != "PASS":  # no diff: no line touched
+    if edges.changed_row(["scripts/atlasinv.py"], ledger, lambda rel: set())["verdict"] != "PASS":  # no line touched
         raise SystemExit("FAIL an unchanged tracked file read as every line touched")
     CASES.append(("a diff touching an enforcer no case names FAILS verify --changed", "an edited enforcer whose "
                   "only proof is a needle some other enforcer happens to print"))

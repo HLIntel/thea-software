@@ -11,8 +11,9 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from typing import Any, cast
 
-ROOT = CASES = mutated = atlas = None  # bound by run() from the running atlas_test module
+ROOT = CASES = mutated = atlas = cast(Any, None)  # bound by run() from the running atlas_test module
 
 
 def run(module) -> None:
@@ -22,13 +23,23 @@ def run(module) -> None:
     plugin_cases()
 
 
+def _cleared_by_does_the_work(row: dict) -> None:
+    """Mutation: every form a row's `cleared_by` clears is the raw shape, so the field, not the pattern, allows it."""
+    cleared = [cmd for cmd in row.get("allows") or [] if re.search(str(row["cleared_by"]), cmd)]
+    if not cleared:
+        raise SystemExit(f"FAIL a cleared_by row plants no form it clears: {row['reason'][:60]}")
+    for cmd in cleared:
+        if not re.search(str(row["pattern"]), cmd):
+            raise SystemExit(f"FAIL cleared_by is not what allows {cmd!r}: its pattern never matched")
+
+
 def shell_verdict_cases(module) -> None:
     """The silent shell shapes are refused, and correct commands are NOT (3.27.0).
 
     Specificity first: a guard that fires on a deliberate subshell or an honest message gets switched off,
     and these five standing verdicts existed precisely because nothing in this tree could judge a shell.
     """
-    from agentpolicy import policy, shell_verdict
+    from agentpolicy import CODED_SHELL_SHAPES, policy, shell_verdict
 
     tick = chr(96)  # built at run time: a literal backtick here would be substituted in this very file
     refused = {
@@ -36,6 +47,10 @@ def shell_verdict_cases(module) -> None:
         "$? after a filter": "make test | grep -q ok; echo $?",
         "$? after a `command` filter": "make test | command grep -q ok; echo $?",
         "backtick in a -m value": f'git commit -m "fix {tick}the thing{tick}"',
+        "backtick in a --body value": f'gh pr create --title t --body "run {tick}make{tick} first"',
+        "backtick in a --title= value": f'gh pr edit 1 --title="fix {tick}x{tick}"',
+        "backtick after a quoted heredoc closes": f"cat <<'EOF' > n\nit's\nEOF\necho \"a {tick}b{tick}\"",
+        "backtick in an unquoted heredoc": f"git commit -F - <<EOF\nfix {tick}the thing{tick}\nEOF",
         "a verdict piped into tail": "python scripts/atlas.py check 2>&1 | tail -5",
         "a test run piped into grep": "pytest -q | grep passed",
         "a credential in the command": "printf '%s' '" + "KGAT" + "_" + "0123456789abcdef0123" + "' >> keys.env",
@@ -44,13 +59,18 @@ def shell_verdict_cases(module) -> None:
         "a plain message": 'git commit -m "plain message"',
         "a deliberate subshell": "( cd x && make ) | tee log",
         "single quotes keep a backtick": f"git commit -m 'literal {tick}x{tick}'",
+        "a quoted heredoc keeps a backtick": f"git commit -F - <<'EOF'\nfix {tick}x{tick} \"q\"\nEOF\ngit log -1",
+        "an escaped backtick in double quotes": f'echo "a \\{tick}b\\{tick}"',
+        "a deliberate bare substitution": f"echo {tick}date{tick}",
+        "a heredoc inside a quoted substitution": f"git commit -m \"$(cat <<'EOF'\nfix {tick}x{tick}\nEOF\n)\"",
+        "a single quote inside a quoted heredoc": f"cat <<'EOF' > n.md\nit's {tick}x{tick}\nEOF",
         "no pipeline at all": "python scripts/verify.py",
         "a verdict under pipefail": "set -o pipefail; pytest -q | tail -20",
         "$? under pipefail": "set -o pipefail; make test | grep -q ok; echo $?",
         "a `command grep` reader": "command grep -rn check scripts | head",
         "a reader that greps for a verdict word": "grep -rn check scripts | head",
         "git output through a filter": "git log --oneline | head -5",
-        "a credential passed by name": "set -a; . ~/.claude-keys.env; set +a",
+        "a credential passed by name": "set -a; . ~/.secrets.env; set +a",
         "$? after a later unpiped command": "du -sh * | sort -h && make lint; echo $?",
         # 3.50.0: each pipeline rule reads ONE top-level statement, heredoc bodies removed — every case
         # below was refused before, measured in seven days of one owner's agent shells.
@@ -64,6 +84,7 @@ def shell_verdict_cases(module) -> None:
     refused.update(
         {
             "$? in the statement right after a filter": "cd x && make test | head -3; echo rc=$?",
+            "$? read from a non-verdict filter": "ls src | grep -c py; echo rc=$?",
             "a verdict after a cd": "cd repo && python scripts/atlas.py check 2>&1 | grep -c FAIL",
             "a heredoc does not hide the pipeline after it": "cat > n <<'EOF'\nx\nEOF\npytest -q | tail -2",
         }
@@ -82,11 +103,23 @@ def shell_verdict_cases(module) -> None:
                 if shell_verdict(f"ssh vps '{cmd}'", platform=platform).allowed:
                     raise SystemExit(f"FAIL an exempt row let the remote shape through on {platform}: {cmd!r}")
             continue
+        if row.get("cleared_by"):
+            _cleared_by_does_the_work(row)
         refused.update({cmd: cmd for cmd in row.get("refuses") or []})
         allowed.update({cmd: cmd for cmd in row.get("allows") or []})
+    rows, seen = {str(r["reason"]) for r in policy().get("shell_shapes") or []}, set()
     for name, cmd in refused.items():
-        if shell_verdict(cmd).allowed:
+        verdict = shell_verdict(cmd)
+        if verdict.allowed:
             raise SystemExit(f"FAIL shell_verdict allowed a silent shape: {name} -> {cmd}")
+        coded = [k for k, opens in CODED_SHELL_SHAPES.items() if verdict.reason.startswith(opens)]
+        if verdict.reason not in rows and len(coded) != 1:
+            raise SystemExit(f"FAIL a coded refusal CODED_SHELL_SHAPES does not name once: {verdict.reason[:60]}")
+        seen.update(coded if verdict.reason not in rows else [])
+    if seen != set(CODED_SHELL_SHAPES):
+        raise SystemExit(
+            f"FAIL CODED_SHELL_SHAPES names a shape no planted case refuses: {set(CODED_SHELL_SHAPES) - seen}"
+        )
     for name, cmd in allowed.items():
         if not shell_verdict(cmd).allowed:
             raise SystemExit(f"FAIL shell_verdict fired on correct code: {name} -> {cmd}")

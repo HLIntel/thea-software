@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
+from typing import Any, cast
 
 import atlas
 import packmanifest
@@ -187,7 +188,7 @@ def _touched_lines(path: str) -> set[int] | None:
     return lines
 
 
-def changed_row(files: list[str], ledger: Path | None = None) -> dict:
+def changed_row(files: list[str], ledger: Path | None = None, touched_lines=None) -> dict:
     """`verify --changed`: every enforcer whose BODY this diff touched, and the planted cases naming it. A
     touched enforcer no case names FAILS, so edge coverage rises where code moves. No ledger is NOT RUN."""
     from safeedit import _git_path  # noqa: PLC0415
@@ -203,13 +204,13 @@ def changed_row(files: list[str], ledger: Path | None = None) -> dict:
     py = {f for f in files if f.endswith(".py")}
     touched = []
     for name in stages():
-        body = _enforcer_body(name)
-        source = body and Path(inspect.getsourcefile(body)).resolve()
+        body: Any = _enforcer_body(name)
+        source = body and Path(cast(str, inspect.getsourcefile(body))).resolve()
         rel = source and source.is_relative_to(atlas.ROOT) and str(source.relative_to(atlas.ROOT))
         if rel not in py:
             continue
         span, first = inspect.getsourcelines(body)
-        lines = _touched_lines(rel)
+        lines = (touched_lines or _touched_lines)(rel)  # a test passes its own diff, never the worktree's
         if lines is None or lines & set(range(first, first + len(span))):
             touched.append(name)
     bare = [n for n in touched if not counts.get(n)]

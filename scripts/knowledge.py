@@ -60,6 +60,29 @@ def data_class_errors() -> list[str]:
     return errors
 
 
+EDGE_FIELDS = ("from", "to", "examples", "plan", "applied_by", "gate", "proves", "does_not_prove", "closed_by")
+
+
+def artifact_edge_errors() -> list[str]:
+    """Every edge joins two declared classes, is applied by something other than the model, and names its gate."""
+    import re  # noqa: PLC0415
+    edges, classes, gates = _rows("artifact_edges"), _rows("data_classes"), _rows("gate_tools")
+    if not edges:
+        return ["atlas.yaml declares no artifact_edges, so every non-code task is a format-specific agent"]
+    errors: list[str] = []
+    for name, spec in edges.items():
+        spec = spec or {}
+        errors += [f"artifact_edges/{name} declares no {f}" for f in EDGE_FIELDS if not spec.get(f)]
+        errors += [f"artifact_edges/{name} names class '{c}', which data_classes does not declare"
+                   for c in [*(spec.get("from") or []), *(spec.get("to") or [])] if str(c) not in classes]
+        if spec.get("gate") and str(spec["gate"]) not in gates:
+            errors.append(f"artifact_edges/{name} is proven by gate '{spec['gate']}', which gate_tools does not hold")
+        if re.search(r"\b(model|llm|agent)\b", str(spec.get("applied_by") or ""), re.IGNORECASE):
+            errors.append(f"artifact_edges/{name} is applied by a model — the model writes the plan and a "
+                          "deterministic step applies it, or the model grades its own work")
+    return errors
+
+
 def knowledge_layer_errors() -> list[str]:
     """Each layer names what it must NEVER hold, and who closes it when it does."""
     errors: list[str] = []
@@ -230,7 +253,7 @@ def governance_errors() -> list[str]:
 
 
 def knowledge_errors() -> list[str]:
-    return (data_class_errors() + knowledge_layer_errors()
+    return (data_class_errors() + artifact_edge_errors() + knowledge_layer_errors()
             + retrieval_policy_errors() + asymmetry_errors() + selection_errors()
             + baseline_errors() + governance_errors())
 
@@ -449,7 +472,7 @@ def _ranked(ledger: dict, fields: tuple, weight: str, query: str, limit: int) ->
 def failures_matching(text: str, as_json: bool) -> int:
     """`thea failures --match TEXT` — which declared shapes an error text is, by atlas.yaml/agent_failure_modes signature.
 
-    Reads the one declaration `thea-dash` style callers and the model lab used to keep their own copy of."""
+    Reads the one declaration dashboard callers and the model lab used to keep their own copy of."""
     import json as _json
     import re as _re
 
@@ -608,63 +631,77 @@ def port_example_block() -> str:
     return "```console\n" + "\n".join(f"$ thea port {t} --line\n{ln}" for t, ln in rows) + "\n```"
 
 
-def glance_block() -> str:
-    """The headline figures, computed on every build: what a reader should know in one line (3.13.0)."""
+def glance_figures() -> dict:
+    """The headline figures as data (3.54.0): docs/INDEX.md renders them and `.agent/facts.json` carries them."""
     from contextcost import footprint  # noqa: PLC0415
     a = atlas()
-    routes = len(route_targets())
-    gates = len(a.get("gate_tools") or {})
-    runtimes = len(a.get("runtime_entry") or [])
-    return (f"**{routes}** languages · **{len(a.get('artifact_routes') or {})}** extensions · "
-            f"**{gates}** gates · **{runtimes}** runtimes · "
-            f"**{len(a.get('agent_failure_modes') or {})}** failure shapes · "
-            f"**{len(a.get('agent_success_patterns') or {})}** success moves · "
-            f"**{len(a.get('hard_invariants') or [])}** invariants · "
-            f"**{len(a.get('instruments') or {})}** instruments · "
-            f"**{_edges()}** agreement edges · "
-            f"**{footprint()['dependencies']}** dependency")
+    return {"languages": len(route_targets()), "extensions": len(a.get("artifact_routes") or {}),
+            "gates": len(a.get("gate_tools") or {}), "runtimes": len(a.get("runtime_entry") or []),
+            "failures": len(a.get("agent_failure_modes") or {}), "successes": len(a.get("agent_success_patterns") or {}),
+            "invariants": len(a.get("hard_invariants") or []), "instruments": len(a.get("instruments") or {}),
+            "edges": _edges(), "deps": footprint()["dependencies"]}
+
+
+def glance_block() -> str:
+    """The headline figures, computed on every build: what a reader should know in one line (3.13.0)."""
+    g = glance_figures()
+    return (f"**{g['languages']}** languages · **{g['extensions']}** extensions · "
+            f"**{g['gates']}** gates · **{g['runtimes']}** runtimes · "
+            f"**{g['failures']}** failure shapes · **{g['successes']}** success moves · "
+            f"**{g['invariants']}** invariants · **{g['instruments']}** instruments · "
+            f"**{g['edges']}** agreement edges · **{g['deps']}** dependency")
 
 
 def proof_flow_block() -> str:
-    """The whole loop as one generated flowchart: ask, prove, learn. Every figure is computed.
+    """The whole loop as one generated flowchart: plug in, guard, prove, learn. Every figure is computed.
 
-    LIGHT IN BOTH GITHUB MODES. A dark page showed through the gaps between bands, so the chart read as
-    black. One outer card (`thea`) now carries its own fill under `theme: base`. No fontFamily (a font
-    mermaid did not measure with pushes text out of boxes), no labelled back-edge (it crossed the forward
-    label and was clipped). Commas, never semicolons, which end a mermaid statement.
+    READS ON EITHER PAGE (3.54.0). A light outer card fixed black gaps between bands and became a white slab
+    on a dark page. Now nothing is a page colour: bands are borders with no fill, nodes are mid-tint
+    chips with dark text, lines and titles are mid-tones — each legible on white and on black alike.
+    PHONE WIDTH: at most three nodes per row and two short lines per box. Measured: 506px wide scaled the
+    text to ~10px in a 375px column; tight spacing and short labels give 390px, ~13px.
+    No fontFamily (a font mermaid did not measure pushes text out of boxes), no labelled back-edge (it
+    crossed the forward label and was clipped), no edge from a node into another band (mermaid then drops
+    that band's direction). Commas, never semicolons, which end a mermaid statement.
+    CLEAN OVER COMPLETE: two short lines per box, one shape per role (round = actor, cylinder = store,
+    hexagon = verdict), labels only on verdict edges. NO RUNTIME NAMES: any agent, chat or model plugs in
+    through the same doors.
     """
     a = atlas()
-    packs, classes = len(route_targets()), len((a.get("verification_policy") or {}).get("profiles") or {})
-    gates, lessons = len(a.get("gate_tools") or {}), len(a.get("agent_failure_modes") or {})
-    moves, insts = len(a.get("agent_success_patterns") or {}), len(a.get("instruments") or {})
-    invs, runtimes = len(a.get("hard_invariants") or []), a.get("runtime_entry") or []
-    named = " · ".join(r["runtime"] for r in runtimes if " " not in r["runtime"] or r["id"] == "claude")
-    theme = ("    primaryColor: \"#ffffff\"\n    primaryBorderColor: \"#2e7d32\"\n    primaryTextColor: \"#1b3a1f\"\n"
-             "    lineColor: \"#2e7d32\"\n    clusterBkg: \"#eef7ee\"\n    clusterBorder: \"#a5d6a7\"\n"
-             "    titleColor: \"#1b5e20\"\n")
+    packs, gates = len(route_targets()), len(a.get("gate_tools") or {})
+    shapes = list((a.get("agent_failure_modes") or {}).values())
+    from agentpolicy import shell_shape_count  # noqa: PLC0415
+
+    moves, shells = len(a.get("agent_success_patterns") or {}), shell_shape_count()
+    theme = ("    primaryColor: \"#e6f2e7\"\n    primaryBorderColor: \"#6f9f73\"\n    primaryTextColor: \"#14301a\"\n"
+             "    lineColor: \"#7f9483\"\n    titleColor: \"#6f9f73\"\n    edgeLabelBackground: \"#e6f2e7\"\n"
+             "    fontSize: \"15px\"\n")
     return ("```mermaid\n---\nconfig:\n  theme: base\n  themeVariables:\n" + theme +
-            "  flowchart:\n    subGraphTitleMargin: {top: 8, bottom: 16}\n"
-            "    padding: 14\n---\nflowchart TB\n"
+            "  flowchart:\n    subGraphTitleMargin: {top: 4, bottom: 6}\n    padding: 4\n"
+            "    nodeSpacing: 12\n    rankSpacing: 14\n"
+            "---\nflowchart TB\n"
             "  accTitle: How Thea proves a change\n"
-            f"  accDescr: {len(runtimes)} runtimes ask, atlas.yaml routes to 1 of {packs} packs and {gates} gates,"
-            " the same gates run at commit, in CI and in thea verify, anything but PASS is refused,"
-            " verdicts feed the failure and success ledgers, a trained judge only advises\n"
-            "  subgraph thea [\" \"]\n    direction TB\n"
-            "    subgraph ask [1 · ask: one declaration answers]\n      direction LR\n"
-            f"      A[{len(runtimes)} agent runtimes<br>{named}] -->|CLI · MCP · hooks · llms.txt| "
-            f"D[(atlas.yaml<br>{insts} instruments · {invs} invariants)]\n"
-            f"      D -->|route| P[{packs} language packs] --> K[{classes} change classes] --> G[{gates} gates]\n    end\n"
-            "    subgraph run [2 · prove: the same gates, three places]\n      direction LR\n"
-            "      H[git hook · commit] & C[CI · pull request] & R[thea verify · agent]"
-            " --> V{{exit code<br>PASS · FAIL · NOT RUN}}\n"
-            "      V -->|PASS| M[landed]\n      V -->|not PASS| X[refused]\n    end\n"
-            "    subgraph learn [3 · learn: every verdict is kept]\n      direction LR\n"
-            f"      F[{lessons} failure shapes<br>{moves} success moves] --> N[handed back<br>at the next port]\n"
-            "      F --> J[thea judge · model<br>advises, never decides]\n    end\n"
-            "    ask --> run --> learn\n  end\n"
-            "  style thea fill:#f6fbf6,stroke:#2e7d32,stroke-width:2px\n"
-            "  classDef stop fill:#fdecea,stroke:#c62828,color:#7f1d1d\n"
-            "  classDef go fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20\n  class X stop\n  class M go\n```")
+            "  accDescr: any agent, chat or model plugs in, each file routes to its gates, hooks guard, the same gates"
+            " prove at commit, in CI and in thea verify, anything but PASS is refused, every verdict is kept\n"
+            "  subgraph ask [1 · plug in]\n    direction LR\n"
+            "    A([any agent<br>or chat]) --> I[CLI · MCP<br>hooks]"
+            f" --> D[(atlas.yaml<br>{packs} languages)]\n  end\n"
+            "  subgraph guard [2 · guard]\n    direction LR\n"
+            f"    S([command]) --> W{{{{{shells}<br>shapes}}}}\n"
+            "    W -->|match| Y[refused]\n    W -->|clear| O[runs]\n"
+            f"    E([edit]) --> L[{gates} gates<br>+ lessons]\n  end\n"
+            "  subgraph run [3 · prove]\n    direction LR\n"
+            "    H([commit<br>PR · verify]) --> V{{exit<br>code}}\n"
+            "    V -->|PASS| M[landed]\n    V -->|else| X[refused]\n  end\n"
+            "  subgraph learn [4 · learn]\n    direction LR\n"
+            f"    Q[(field<br>ledger)] --> F[{len(shapes)} shapes<br>{moves} moves]"
+            " --> N[next port<br>+ judge]\n  end\n"
+            "  ask --> guard --> run --> learn\n"
+            "  classDef band fill:none,stroke:#6f9f73,stroke-dasharray:4 3\n  class ask,guard,run,learn band\n"
+            "  classDef stop fill:#f6d5d2,stroke:#c0605a,color:#5c1410\n"
+            "  classDef go fill:#cfe9d2,stroke:#4f9a58,color:#103d17\n"
+            "  classDef store fill:#d6e4f5,stroke:#5f86b8,color:#0d2a4d\n"
+            "  class X,Y stop\n  class M,O go\n  class D,Q,V,W store\n```")
 
 
 def _edges() -> int:
@@ -807,6 +844,7 @@ def resume(as_json: bool) -> int:
 COMMANDS = {
     "steps": lambda a: steps(a.path, a.runtime, a.change, a.json, a.tier),
     "failures": lambda a: draft(a.id or "", a.draft, a.json) if a.draft
+        else __import__("agents").failures_shown(a.shown, a.route, atlas().get("agent_failure_modes") or {}) if a.shown
         else failures_matching(a.match, a.json) if a.match else failures(a.id, a.json, a.for_, a.limit),
     "successes": lambda a: successes(a.id, a.json, a.for_, a.limit),
     "role": lambda a: role(a.name, a.json),
@@ -852,6 +890,7 @@ def shell_check(command: str, as_json: bool) -> int:
 
     from agentpolicy import shell_verdict  # noqa: PLC0415
     verdict = shell_verdict(command)
+    _field_refusal(verdict, command)
     if as_json:
         print(_json.dumps({"schema": 1, "command": "shell", "allowed": verdict.allowed,
                            "control": verdict.control, "why": verdict.reason}, indent=2))
@@ -859,6 +898,19 @@ def shell_check(command: str, as_json: bool) -> int:
         print(("ALLOW  " if verdict.allowed else "REFUSE ") + verdict.reason)
     return 0 if verdict.allowed else 3
 
+
+def _field_refusal(verdict, command: str) -> None:
+    """A refusal onto the field ledger: the shape that fired and the command's digest, never its text.
+
+    The shape id is what makes a refusal → resolution join possible: the same shape firing again in the
+    same session is a re-fire; silence after it is the shape resolved.
+    """
+    if verdict.allowed:
+        return
+    import agentaudit  # noqa: PLC0415
+    import agents  # noqa: PLC0415
+    shape = agentaudit.digest(verdict.reason)["sha256"][:12]  # a shape's reason is fixed text: its hash is its id
+    agents.field("field_refused", {"shape": shape, "command": agentaudit.digest(command)})
 
 
 def hook_input(text: str) -> dict:
@@ -872,8 +924,25 @@ def hook_input(text: str) -> dict:
         record = _json.loads(text)
     except ValueError:
         return {}
+    if isinstance(record, dict):
+        _hook_beat(record)
     tool_input = record.get("tool_input") if isinstance(record, dict) else None
     return tool_input if isinstance(tool_input, dict) else {}
+
+
+def _hook_beat(record: dict) -> None:
+    """Every hook call is a heartbeat (3.54.0): the record carries `session_id` and `cwd`, so no second hook runs.
+
+    FAILS OPEN and silent on a record with no session: a beat must never change a hook's answer.
+    """
+    import os  # noqa: PLC0415
+
+    import agents  # noqa: PLC0415
+
+    try:
+        agents.beat(os.environ.get("THEA_AGENT") or "claude-code", record.get("session_id"), "hook", record.get("cwd"))
+    except (agents.BeatError, OSError):
+        return
 
 
 def _hook_answer(event: str, **fields: str) -> None:
@@ -893,6 +962,7 @@ def shell_hook(text: str) -> int:
     if not isinstance(command, str) or not command.strip():
         return 0
     verdict = shell_verdict(command)
+    _field_refusal(verdict, command)
     if not verdict.allowed:
         _hook_answer("PreToolUse", permissionDecision="ask", permissionDecisionReason=f"thea shell: {verdict.reason}")
     return 0
@@ -914,6 +984,10 @@ def port_hook(text: str) -> int:
         return 0
     if rec["route"] is not None:  # a file no pack routes has no gate to name: silence, not a "none" line
         _hook_answer("PostToolUse", additionalContext=rec["line"])
+        shown = [lesson.get("failure") for lesson in rec.get("lessons") or [] if isinstance(lesson, dict)]
+        if shown:
+            import agents  # noqa: PLC0415
+            agents.field("field_lesson", {"route": rec["route"], "failures": shown})
     return 0
 
 

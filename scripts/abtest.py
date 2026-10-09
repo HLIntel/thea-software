@@ -37,9 +37,6 @@ from pathlib import Path
 import resilience
 from atlascore import ROOT, route_targets
 
-ENDPOINT = "http://127.0.0.1:8799/v1/chat/completions"
-_ENDPOINT_BREAKER = resilience.Breaker(threshold=3, cooldown=60.0)
-
 
 def _manifest(route: str) -> dict:
     from agentpolicy import pack_manifest
@@ -348,6 +345,9 @@ def record(results: list[dict]) -> None:
     lock.close()
 
 
+HISTORY_MAX_BYTES = 1 << 20  # ~5000 rows: years of measured runs; past it, archive the file by hand
+
+
 def append_history(path: Path, results: list[dict], version: str) -> int:
     """APPEND one line per recorded model to the history, beside the merged latest file (B01).
 
@@ -364,8 +364,13 @@ def append_history(path: Path, results: list[dict], version: str) -> int:
         for r in results
         if "arms" in r and not unanswered(r)
     ]
+    text = "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+    if (path.stat().st_size if path.exists() else 0) + len(text) > HISTORY_MAX_BYTES:
+        # REFUSED, NEVER TRIMMED: history is the only record of a moved score; archive it, then re-run.
+        print(f"history: refused — {path.name} would pass {HISTORY_MAX_BYTES} bytes; gzip it aside", file=sys.stderr)
+        return 0
     with path.open("a", encoding="utf-8") as out:
-        out.writelines(json.dumps(row, sort_keys=True) + "\n" for row in rows)
+        out.write(text)
     return len(rows)
 
 
@@ -383,10 +388,6 @@ def measured_block() -> str:
     """
     import json as _json
 
-    from atlascore import atlas as _atlas  # noqa: PLC0415
-    from atlasinv import declared_case_total, role_coverage  # noqa: PLC0415 — atlasinv imports this module
-    from contextcost import footprint, lazy_bytes, measure, tokens
-
     ab = _json.loads((ROOT / "benchmarks" / "ab-latest.json").read_text(encoding="utf-8"))
     models = ab["models"]
 
@@ -399,7 +400,52 @@ def measured_block() -> str:
         low, high = wilson(sum(r["correct"] for r in runs), sum(r["asked"] for r in runs))
         return f"{100 * sum(r['correct'] for r in runs) / sum(r['asked'] for r in runs):.0f}% (95% interval {100 * low:.0f}–{100 * high:.0f}%)"
 
-    def fewer(against: str) -> tuple[int, int]:
+    f = measured_figures()
+    v = "v" + " / v".join(f["ab_versions"])
+    lines = [
+        "*With Thea*: the model sees what `thea gate` prints. *Blind*: only the language names. Token savings",
+        "compare against pasting every language's tool list.",
+        "",
+        *claude_lines(models),
+        "",
+        *task_lines(),
+        f"**Across all {f['ab_models']} models tested** ({f['ab_providers']} providers, {f['ab_questions']:,} questions, `abtest.py` {v})",
+        f"- **Right answers:** {pooled('scoped')} with Thea, {pooled('unassisted')} blind; every model "
+        f"{f['ab_low']}–{f['ab_high']}% with Thea. A random guess scores {f['ab_chance']}%.",
+        f"- **Tokens:** {f['tok_fewer']}% fewer than pasting every tool list, {f['tok_blind']}% fewer than blind.",
+        "",
+        "**The repository itself** (recomputed on every build)",
+        f"- **{f['pre_tokens']:,}** tokens read before routing; the other {f['lazy_docs']} documents ({f['lazy_kib']} KiB) load "
+        "only when a route names one.",
+        f"- **{f['pairs']}** language × check pairs ({f['pairs'] // f['pair_checks']} languages × {f['pair_checks']} checks), all answered: {f['pairs_runnable']} with a command, "
+        f"{f['pairs_absent']} with a declared *no tool*, {f['pairs_silent']} silently.",
+        f"- **{f['planted']}** mistake kinds planted in the tests, each refused.",
+        *enforce_lines(),
+        *workflow_lines(),
+        *ledger_lines(),
+        *field_lines(),
+        f"- **{len(f['controls'])}** agent controls that block, not warn: {', '.join(f['controls'])}.",
+        f"- **{f['install_kib']} KiB** install: {f['install_modules']} module{'s' * (f['install_modules'] != 1)}, {f['deps']} dependency — "
+        f"{f['deps_closure']} in total with its own dependencies.",
+    ]
+    return "\n".join(lines)
+
+
+def measured_figures() -> dict:
+    """EVERY FIGURE measured_block prints, as data (3.54.0): the README renders from this dict and
+    `.agent/facts.json` is this dict, so a site or dashboard reads keys, never a regex over prose."""
+    from atlascore import atlas as _atlas  # noqa: PLC0415
+    from atlasinv import declared_case_total, role_coverage  # noqa: PLC0415 — atlasinv imports this module
+    from contextcost import footprint, lazy_bytes, measure, tokens
+
+    ab = json.loads((ROOT / "benchmarks" / "ab-latest.json").read_text(encoding="utf-8"))
+    models = ab["models"]
+
+    def rate(arm: str) -> int:
+        runs = [m[arm] for m in models.values() if arm in m and m[arm]["asked"]]
+        return round(100 * sum(r["correct"] for r in runs) / sum(r["asked"] for r in runs))
+
+    def fewer(against: str) -> int:
         pairs = [
             (m["scoped"]["tokens_per_question"], m[against]["tokens_per_question"])
             for m in models.values()
@@ -408,43 +454,53 @@ def measured_block() -> str:
             and m["scoped"]["tokens_per_question"]
             and m[against]["tokens_per_question"]
         ]
-        return (round(100 * (1 - sum(a for a, _ in pairs) / sum(b for _, b in pairs))) if pairs else 0), len(pairs)
+        return round(100 * (1 - sum(a for a, _ in pairs) / sum(b for _, b in pairs))) if pairs else 0
 
     spread = sorted(100 * m["scoped"]["correct"] / m["scoped"]["asked"] for m in models.values() if "scoped" in m)
-    providers = {name.split(":", 1)[0] if ":" in name else "router" for name in models}
-    k = sum(m[a]["asked"] for m in models.values() for a in m if isinstance(m[a], dict) and "asked" in m[a])
-    versions = sorted({str(m.get("measured_at", ab.get("measured_at"))) for m in models.values()})
-    v = "v" + " / v".join(versions)
-    (whole, _), (blind, _) = fewer("whole_tree"), fewer("unassisted")
     cover, weight = role_coverage(), footprint()
     lazy, docs = lazy_bytes()
-    entry = tokens(int(measure()["agent"]["bytes"]))
-    controls = list(((_atlas().get("agent_policy") or {}).get("controls") or {}))
-    lines = [
-        "*With Thea*: the model is shown what `thea gate` prints for the file. *Blind*: it gets only the list",
-        "of language names. Token savings are against the usual alternative: pasting in every language's tool list.",
-        "",
-        *claude_lines(models),
-        "",
-        *task_lines(),
-        f"**Across all {len(models)} models tested** ({len(providers)} providers, {k:,} questions, `abtest.py` {v})",
-        f"- **Right answers:** {pooled('scoped')} with Thea, {pooled('unassisted')} blind; every model "
-        f"{spread[0]:.0f}–{spread[-1]:.0f}% with Thea. A random guess scores {100 * ab['chance_baseline']:.1f}%.",
-        f"- **Tokens:** reads {whole}% fewer than pasting every tool list, and {blind}% fewer than asking blind.",
-        "",
-        "**The repository itself** (recomputed on every build)",
-        f"- **Before routing:** an agent reads {entry:,} tokens. The other {docs} documents ({lazy // 1024} KiB) load "
-        "only when a route names one.",
-        f"- **Coverage:** all {cover['total']} language × check pairs answer — {cover['runnable']} with a command, "
-        f"{cover['absent']} with a declared *no tool*, {cover['undeclared']} silently.",
-        f"- **Mistakes caught:** {declared_case_total()} kinds are planted in the tests, and each must be refused.",
-        *enforce_lines(),
-        *workflow_lines(),
-        f"- **Agent controls that block, not warn:** {', '.join(controls)}.",
-        f"- **Install:** {weight['bytes'] // 1024} KiB, {weight['modules']} module{'s' * (weight['modules'] != 1)}, {weight['dependencies']} dependency — "
-        f"{weight['declared'].get('resolved_closure')} in total with its own dependencies.",
-    ]
-    return "\n".join(lines)
+    path = ROOT / "benchmarks" / "enforce-latest.json"
+    e = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    return {
+        "ab_models": len(models),
+        "ab_providers": len({name.split(":", 1)[0] if ":" in name else "router" for name in models}),
+        "ab_questions": sum(
+            m[a]["asked"] for m in models.values() for a in m if isinstance(m[a], dict) and "asked" in m[a]
+        ),
+        "ab_versions": sorted({str(m.get("measured_at", ab.get("measured_at"))) for m in models.values()}),
+        "ab_thea": rate("scoped"),
+        "ab_blind": rate("unassisted"),
+        "ab_low": round(spread[0]),
+        "ab_high": round(spread[-1]),
+        "ab_chance": round(100 * ab["chance_baseline"], 1),
+        "tok_fewer": fewer("whole_tree"),
+        "tok_blind": fewer("unassisted"),
+        "pre_tokens": tokens(int(measure()["agent"]["bytes"])),
+        "lazy_docs": docs,
+        "lazy_kib": lazy // 1024,
+        "pairs": cover["total"],
+        "pair_checks": len(cover["by_role"]),
+        "pairs_runnable": cover["runnable"],
+        "pairs_absent": cover["absent"],
+        "pairs_silent": cover["undeclared"],
+        "planted": declared_case_total(),
+        **(
+            {
+                "enf_refused": e["refused"],
+                "enf_planted": e["planted"],
+                "enf_langs": len(e["languages"]),
+                "enf_untested": e["not_trialled"],
+            }
+            if e
+            else {}
+        ),
+        **ledger_figures(),
+        "controls": list(((_atlas().get("agent_policy") or {}).get("controls") or {})),
+        "install_kib": weight["bytes"] // 1024,
+        "install_modules": weight["modules"],
+        "deps": weight["dependencies"],
+        "deps_closure": weight["declared"].get("resolved_closure"),
+    }
 
 
 def enforce_lines() -> list[str]:
@@ -454,8 +510,8 @@ def enforce_lines() -> list[str]:
         return []
     e = json.loads(path.read_text(encoding="utf-8"))
     return [
-        f"- **Enforced at commit:** refused {e['refused']} of {e['planted']} planted breaks in "
-        f"{len(e['languages'])} languages; {e['not_trialled']} files untested here (`enforce.py`, v{e['measured_at']})."
+        f"- **{e['refused']}/{e['planted']}** planted breaks refused at commit, in "
+        f"{len(e['languages'])} languages; {e['not_trialled']} files untested (`enforce.py`, v{e['measured_at']})."
     ]
 
 
@@ -470,6 +526,8 @@ def workflow_lines() -> list[str]:
         f"{a['thea']['gates_right']}/{a['thea']['asked']}"
         for m, a in sorted(handoff.items(), key=lambda kv: -_rank(kv[0]))
     )
+    right = sum(a["thea"]["gates_right"] for a in handoff.values())
+    asked = sum(a["thea"]["asked"] for a in handoff.values())
     data = json.loads(path.read_text(encoding="utf-8"))
     solo = [
         arm
@@ -482,14 +540,52 @@ def workflow_lines() -> list[str]:
     clean = sum(a.get("committed_clean", 0) for a in solo)
     runs = sum(sum(v for k, v in a.items()) for a in solo)
     lines = [
-        f"- **Agent-to-agent handoffs with the right checks** (schema alone → with Thea): {per} (`workflowbench.py`)."
+        f"- **{right}/{asked}** agent-to-agent handoffs carry the right checks with Thea (schema alone → with Thea): "
+        f"{per} (`workflowbench.py`)."
     ]
     if runs:
         lines.append(
-            f"- **Solo commits:** {clean}/{runs} clean with or without the hook on these tasks; a planted "
+            f"- **{clean}/{runs}** solo commits clean with or without the hook on these tasks; a planted "
             "broken commit is refused."
         )
     return lines
+
+
+def ledger_figures() -> dict:
+    """The failure ledger, counted from atlas.yaml: a sighting is typed once, as its row's own number."""
+    from atlascore import atlas as _atlas  # noqa: PLC0415
+
+    rows = list((_atlas().get("agent_failure_modes") or {}).values())
+    seen = [int(r.get("sightings") or 1) for r in rows]
+    return {
+        "failures_sightings": sum(seen),
+        "failures_recurred": sum(n > 1 for n in seen),
+        "failures_guarded": sum(bool(r.get("enforced_by")) for r in rows),
+    }
+
+
+def ledger_lines() -> list[str]:
+    from atlascore import atlas as _atlas  # noqa: PLC0415
+
+    f = ledger_figures()
+    return [
+        f"- **{len(_atlas().get('agent_failure_modes') or {})}** failure shapes in the ledger: {f['failures_sightings']} sightings, "
+        f"{f['failures_recurred']} recurred; {f['failures_guarded']} guarded."
+    ]
+
+
+def field_lines() -> list[str]:
+    """`agents.py --field --record`: the field ledger in use, aggregates only. Nothing when none is recorded."""
+    path = ROOT / "benchmarks" / "field-latest.json"
+    if not path.exists():
+        return []
+    f = json.loads(path.read_text(encoding="utf-8"))
+    return [
+        f"- **In use** (field ledger, `agents.py --field`, v{f['measured_at']}): {f['refusals']} refusals of "
+        f"{f['refusal_shapes']} shapes, {f['refires']} re-fired in the same session; verify {f['verify_pass']} pass, "
+        f"{f['verify_fail']} fail, {f['sessions_recovered']}/{f['sessions_failed']} failing sessions recovered; "
+        f"{f['lessons_shown']} lessons shown; {f['lands_armed']}/{f['lands']} lands armed."
+    ]
 
 
 def task_lines() -> list[str]:

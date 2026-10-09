@@ -49,16 +49,50 @@ def _scan(text: str, placeholders: tuple) -> tuple:
     return tuple(found)
 
 
-def private_terms() -> tuple[str, ...]:
+def private_terms(home: str | None = None) -> tuple[str, ...] | None:
     """Names only the owner knows — their projects, routers, fleet — read from the file THEA_PRIVATE_TERMS
     names, one per line (3.45.0). The LIST is never tracked here: a public roster of private names would be
-    the leak it exists to stop. Unset or unreadable means no private check ran, and nothing claims it did."""
-    path = os.environ.get("THEA_PRIVATE_TERMS", "")
+    the leak it exists to stop. Unset is `()` — no private check ran, and `main` prints NOT RUN. Set but
+    unreadable or empty is `None`, refused by `leak_errors`: a list the owner declared and the check could
+    not read used to pass as clean, and the tree carried four of the owner's names past it.
+
+    DECLARED ONCE PER CLONE (3.53.0). The variable lived in one agent's settings, so a terminal, another
+    agent or the commit hook ran with it unset and passed blind while the keys-file name and three host
+    names reached the tree. `git config thea.privateTerms <path>` sits in the clone's untracked config,
+    shared by every worktree and every shell; the variable still wins. A declared list also takes in
+    `host_secret_names`: a list typed by hand is short by the names nobody thought to type."""
+    path = os.environ.get("THEA_PRIVATE_TERMS", "") or _git_config("thea.privateTerms")
+    if not path:
+        return ()
     try:
-        lines = open(os.path.expanduser(path), encoding="utf-8").read().splitlines() if path else []  # noqa: SIM115
+        lines = open(os.path.expanduser(path), encoding="utf-8").read().splitlines()  # noqa: SIM115
+    except OSError:
+        return None
+    terms = tuple(t.strip() for t in lines if t.strip() and not t.lstrip().startswith("#"))
+    return terms + tuple(n for n in host_secret_names(home) if n not in terms) if terms else None
+
+
+def _git_config(key: str) -> str:
+    done = subprocess.run(
+        ["git", "config", "--get", key], cwd=ROOT, capture_output=True, text=True, timeout=60, check=False
+    )  # noqa: S603, S607
+    return done.stdout.strip()
+
+
+SECRET_WORDS = re.compile(r"(?i)key|secret|token|cred|passw")
+
+
+def host_secret_names(home: str | None = None) -> tuple[str, ...]:
+    """Names of the files in the home directory that hold or index credentials (`.x-keys.env`), DERIVED
+    from the disk. A name of three or more parts is specific enough to be the owner's; a bare
+    `.secrets` or `.secrets.env` is the generic example every guide writes, and stays allowed."""
+    try:
+        names = os.listdir(home or os.path.expanduser("~"))
     except OSError:
         return ()
-    return tuple(t.strip() for t in lines if t.strip() and not t.lstrip().startswith("#"))
+    return tuple(
+        sorted(n for n in names if n.startswith(".") and SECRET_WORDS.search(n) and len(re.split(r"[.-]", n[1:])) >= 3)
+    )
 
 
 @lru_cache(maxsize=1024)
@@ -105,6 +139,11 @@ def leak_errors() -> list[str]:
     spec = atlas().get("public_surface") or {}
     placeholders = [str(p) for p in spec.get("placeholders") or []]
     errors, terms = [], private_terms()
+    if terms is None:
+        errors.append(
+            "THEA_PRIVATE_TERMS names a file that is unreadable or lists no term — the private-term check would pass blind"
+        )
+        terms = ()
     allowed = {str(m) for m in spec.get("network_modules") or []}
     errors += [
         f"atlas.yaml/public_surface/network_modules names {m}, which is not tracked — a stale exemption"
@@ -151,5 +190,12 @@ def leak_errors() -> list[str]:
 
 if __name__ == "__main__":
     found = leak_errors()
+    named = private_terms()
+    print(
+        f"private terms: {len(named)} checked"
+        if named
+        else "private terms: NOT RUN (neither THEA_PRIVATE_TERMS nor git config thea.privateTerms is set)",
+        file=sys.stderr,
+    )
     print("\n".join(found) or "no private detail in the public tree")
     sys.exit(1 if found else 0)

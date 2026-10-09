@@ -17,6 +17,7 @@ The verdict is the exit code, never the text; the coverage line is shown, never 
 
 from __future__ import annotations
 
+import atexit
 import hashlib
 import json
 import os
@@ -24,8 +25,10 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
 from atlascore import ROOT, atlas, changed_paths, diff_names, ls_files
 
@@ -120,7 +123,9 @@ def run_gate(gate: dict, cwd: Path = ROOT) -> dict:
         return row | {"verdict": "NOT RUN", "why": f"{argv[0]} is not installed here"}
     start = time.monotonic()
     try:
-        done = subprocess.run(argv, cwd=cwd, capture_output=True, text=True, timeout=TIMEOUT, check=False)  # noqa: S603
+        done = subprocess.run(
+            argv, cwd=cwd, capture_output=True, text=True, timeout=TIMEOUT, check=False, env=_gate_env()
+        )  # noqa: S603
     except subprocess.TimeoutExpired:
         return row | {"verdict": "FAIL", "why": f"timed out after {TIMEOUT}s", "seconds": TIMEOUT}
     lines = [ln for ln in (done.stdout + done.stderr).splitlines() if ln.strip()]
@@ -219,6 +224,24 @@ def unpushed_row() -> dict:
         "verdict": "FAIL" if problems else "PASS",
         "calls": 1,
         "why": f"{len(problems)} breach(es), first: {problems[0]}"[:160] if problems else "",
+    }
+
+
+def upstream_row() -> dict:
+    """THE UPSTREAM COUNT (3.53.0): the lane bound's other direction, commits on the default branch this
+    lane lacks. No origin ref is NOT RUN; the count read is printed on every verdict, a pass included."""
+    from atlascore import atlas as _atlas  # noqa: PLC0415
+    from upstream import upstream_errors  # noqa: PLC0415
+
+    problems, count = upstream_errors(Path.cwd(), _atlas().get("branch_policy") or {})
+    return {
+        "id": "upstream_bound",
+        "argv": ["python", "scripts/upstream.py"],
+        "mutates": False,
+        "machine_dependent": True,
+        "verdict": "FAIL" if problems else "NOT RUN" if count is None else "PASS",
+        "calls": 1,
+        "why": (problems[0] if problems else f"upstream count {count}, from the last fetch")[:160],
     }
 
 
@@ -325,7 +348,7 @@ def main(argv: list[str]) -> int:
     tree = input_digest()
     saved = {} if "--fresh" in argv else reuse_evidence(gates, tree)
     keys = [gate_key(g) for g in gates]
-    rows = [
+    rows: list[dict[str, Any]] = [
         saved[k] | {"verdict": "REUSED", "why": "this tree, argv and environment PASSED before; --fresh re-measures"}
         if k in saved
         else run_gate(g)
@@ -340,10 +363,22 @@ def main(argv: list[str]) -> int:
         import edges  # noqa: PLC0415
 
         rows.append(edges.changed_row([f for f in changed_paths(ROOT) if (ROOT / f).is_file()]))
-    rows += [] if changed else [unpushed_row()]
+    rows += [] if changed else [unpushed_row(), upstream_row()]
     from safeedit import _git_path  # noqa: PLC0415
 
     return report(rows, argv, _git_path("thea-last-verify.json"), measured, spared, learn(rows))
+
+
+GATE_HOME: list[str] = []  # one private directory per run, made on first use
+
+
+def _gate_env() -> dict:
+    """A gate's environment: THEA_HOME moved aside, so a suite's planted refusals never reach the field ledger."""
+    if not GATE_HOME:
+        GATE_HOME.append(tempfile.mkdtemp(prefix="thea-gate-home-"))
+        # REMOVED AT EXIT (3.54.0): one directory per run and none removed left 34 in $TMPDIR on one machine.
+        atexit.register(shutil.rmtree, GATE_HOME[0], ignore_errors=True)
+    return {**os.environ, "THEA_HOME": GATE_HOME[0]}
 
 
 def report(rows: list[dict], argv: list[str], marker: Path, measured: bool, spared: float = 0, recurring=()) -> int:
@@ -355,6 +390,10 @@ def report(rows: list[dict], argv: list[str], marker: Path, measured: bool, spar
     # knows which gate failed without re-running everything. A runtime store inside .git, never tracked.
     if not os.environ.get("THEA_READ_ONLY"):  # an MCP verify's exit 2 overwrote the lane's real PASS
         marker.write_text(json.dumps({"exit": code, "rows": rows, "measured": measured}), encoding="utf-8")
+        import agents  # noqa: PLC0415
+
+        failed = [r["id"] for r in rows if r["verdict"] in ("FAIL", "NOT RUN")]
+        agents.field("field_verify", {"exit": code, "tally": tally, "failed": failed})
     if "--json" in argv:
         print(json.dumps(record(rows, tally, code), indent=2))
         return code

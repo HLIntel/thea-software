@@ -51,6 +51,7 @@ Changelog = "https://github.com/HLIntel/thea-software/blob/main/docs/VERSIONING.
 
 [project.optional-dependencies]
 quality = ["ruff>=0.6"]
+crosscheck = ["jsonschema>=4"]       # optional: the reference validator atlas_test and doctor use when present
 
 # THE HARNESS IS INSTALLABLE; THE ATLAS IS POINTED AT. This is the whole external interface, and
 # the split is deliberate. Shipping the policy content inside the wheel would create a second copy
@@ -150,3 +151,17 @@ skip-magic-trailing-comma = true
 # declared in that file's own docblock and wired into .github/workflows/atlas-ci.yml. Declaring a
 # pytest section now would add a second, empty test surface whose green exit means nothing. When a
 # real pytest suite exists, configure it here and give it a failing case first.
+
+[tool.basedpyright]
+# THE PACK'S DECLARED TYPE CHECKER, RUN ON ITS OWN TREE (3.54.0): gate `typecheck`. Standard mode, the
+# same files the lint gate reads plus fuzz/. Zero errors, no baseline: fix the type, never silence it.
+include = ["scripts", "examples", "fuzz"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+reportMissingModuleSource = false
+executionEnvironments = [
+    { root = "examples/python", extraPaths = ["examples/python", "scripts"] },
+    { root = "examples/webhooks", extraPaths = ["examples/webhooks", "scripts"] },
+    { root = "fuzz", extraPaths = ["fuzz", "scripts"] },
+    { root = "scripts", extraPaths = ["scripts"] },
+]

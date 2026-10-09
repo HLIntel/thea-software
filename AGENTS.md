@@ -25,10 +25,10 @@ are frozen in `tools/atlas-output.schema.json`: depend on those ids.
 2. **No calendar date.** Stamp a claim with its contract version; only an external project's own
    date-shaped version (`atlas.yaml/external_versions`) is exempt.
 3. **No tool name in prose.** Tools live in `languages/<route>/tools.yaml`; documents name *gates*.
-4. **Refuse rather than invent.** `none` is a real answer; a parser that picks a winner on
-   ambiguous input is worse than one that errors.
-5. **Every limit names its closer.** All 82 instruments carry `proves`, `does_not_prove`
-   and `closed_by`; an empty closer fails.
+4. **Refuse rather than invent.** `none` is a real answer; a parser that picks a winner on ambiguous
+   input is worse than one that errors.
+5. **Every limit names its closer.** All 82 instruments carry `proves`, `does_not_prove` and
+   `closed_by`; an empty closer fails.
 6. **Never raise a cap to fit your code.** `code_shape` and `context_policy` ratchets only fall:
    split the function or shrink the entry path.
 7. **A change ends when the artifact parses.** Every tracked source and JSON file must parse; that
@@ -43,7 +43,7 @@ Each RECURRED here: once is a bug, twice a rule. Learn the shapes; they return i
 - `a_check_proven_on_one_shape_of_input` — a verified command, and a hook that suddenly rejects good code; a passing MCP probe, and a client that cannot connect
 - `a_quote_that_outlived_its_text` — a clean `thea check` followed by a suite that dies minutes in with substring not found
 - `a_pushed_lane_nothing_will_merge` — done, from the terminal
-- …and 105 more: `thea failures`
+- …and 109 more: `thea failures`
 
 ## Before you claim a change is done
 
@@ -54,7 +54,7 @@ gates, then verify **on the exit code**, never on output:
 python scripts/verify.py    # PASS / FAIL / NOT RUN per gate; exit 0 only if every gate passed
 ```
 
-It runs `verification_policy/done_set`: `contract`, `planted_suite`, `agent_controls`, `code_shape`, `examples`, `context_cost`, `markdown`, `lint`, `format`, `own_enforcement`.
+It runs `verification_policy/done_set`: `contract`, `planted_suite`, `agent_controls`, `code_shape`, `examples`, `context_cost`, `markdown`, `lint`, `format`, `typecheck`, `own_enforcement`.
 
 Both suites plant a real defect per rule and assert their own case counts: new rule, new planted
 defect. Land with `python scripts/branchstate.py --land`; a bare push of a lane is refused.

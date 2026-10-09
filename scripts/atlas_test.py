@@ -87,6 +87,7 @@ def suite_lock(wait: float | None = None):
         handle.close()
         raise SystemExit("another atlas_test run or measurement holds this worktree — REFUSING to "
                          "interleave planted defects with it")
+    __import__("agents_test").pin_suite_home()  # the lock holder plants: never into the owner's ~/.thea (3.54.0)
     return handle
 
 
@@ -122,7 +123,7 @@ def host_lock():
 def mutated(rel: str, transform):
     """Plant a defect in a tracked file, then restore it byte for byte."""
     path = ROOT / rel
-    backup = path.read_bytes()
+    backup, planted = path.read_bytes(), ""
     try:
         planted = transform(backup.decode("utf-8"))
         # A MUTATION THAT DID NOT MUTATE. str.replace with no match returns the
@@ -302,8 +303,8 @@ def agent_and_entry_cases() -> None:
     # list; both moved when the instrument's SCOPE was corrected, and the harness refused rather
     # than planting nothing — which is the behaviour, and also the second time a fixture in this
     # file has named a value it could have read. atlas.yaml owns the number.
-    _agent_budget = re.search(r"^      budget_bytes: (\d+)$", (ROOT / "atlas.yaml").read_text(), re.M).group(0)
-    _first_entry = re.search(r"^      alternatives: \[([A-Za-z0-9._]+)", (ROOT / "atlas.yaml").read_text(), re.M).group(1)
+    _agent_budget = next(re.finditer(r"^      budget_bytes: (\d+)$", (ROOT / "atlas.yaml").read_text(), re.M)).group(0)
+    _first_entry = next(re.finditer(r"^      alternatives: \[([A-Za-z0-9._]+)", (ROOT / "atlas.yaml").read_text(), re.M)).group(1)
     with mutated("atlas.yaml", lambda s, a=_agent_budget: s.replace(a, "      budget_bytes: 900", 1)):
         case("an entry path over its budget FAILS", "an entry document growing a page at a time while "
              "every other count in the contract stays green", True, "the ratchet only falls", by=('contextcost.entry_cost_errors', 'inv:context_is_progressively_disclosed'))
@@ -436,7 +437,7 @@ def route_ambiguity_cases() -> None:
         (str(ROOT / "languages/go/README.md"), "go", "a pack refusing to route to itself"),
         (str(ROOT / "languages/quantum/qsharp/OPERATING.md"), "quantum/qsharp", "a nested pack "
                                                                                 "resolving to its parent"),
-        (str(ROOT / "languages/README.md"), None, "the pack INDEX resolving as if it were a pack"),
+        (str(ROOT / "languages/README.md"), "markdown", "the pack INDEX resolving as if it were a pack"),
         (str(ROOT / "scripts/../examples/rust/main.rs"), "rust", "a traversal that lands back inside "
                                                                  "the repository being refused"),
     ]
@@ -453,10 +454,10 @@ def route_ambiguity_cases() -> None:
         f"a .py inside the rust pack resolved {route!r} by {rule!r}; precedence is declared, not guessed"
     assert ".py" in evidence, "the evidence must name what decided it"
 
-    # A SYMLINK IS NOT ITS TARGET for routing: docs/MODEL.md points at MODEL.md and neither has a
-    # routed extension, so the honest answer is no route rather than the target's.
+    # A SYMLINK ROUTES BY ITS OWN NAME: docs/MODEL.md points at MODEL.md, and since 3.54.0 .md is the
+    # markdown route — a link into a pack directory must not borrow the target's pack.
     assert (ROOT / "docs/MODEL.md").is_symlink(), "fixture moved: docs/MODEL.md is no longer a symlink"
-    assert atlas.route_for("docs/MODEL.md") is None, "a symlinked document invented a route"
+    assert atlas.route_for("docs/MODEL.md") == "markdown", "a symlinked document routed as something else"
 
     CASES.append((f"route ambiguity matrix: {len(cases)} paths + precedence, symlink and "
                   "extension-over-directory",
@@ -682,7 +683,7 @@ def _version_and_closure_cases() -> None:
     CASES.append(("gate <file> with no gate lists every gate the change needs",
                   "a first-time user forced to learn the gate vocabulary before getting any answer"))
     print("  ok    gate <file> with no gate lists every gate the change needs")
-    _quoted = re.search(r"^  root_cause_outside_scope: \{closed_by: '([^']*)'\}$", (ROOT / "atlas.yaml").read_text(), re.M)
+    _quoted = next(re.finditer(r"^  root_cause_outside_scope: \{closed_by: '([^']*)'\}$", (ROOT / "atlas.yaml").read_text(), re.M))
     with mutated("atlas.yaml", lambda t, m=_quoted: t.replace(m.group(0), m.group(0).replace("'", ""), 1)):
         case("a YAML flow value split on a comma FAILS", "a declaration that loads half its text and passes",
              True, "a flow value split on a comma", by='parse_errors')
@@ -808,7 +809,7 @@ def main() -> int:
     # 1. GENERATED-BLOCK DRIFT — the reviewer's risk: a doc edited by hand.
     # THE ANCHOR IS DERIVED FROM A BLOCK THAT LIVES IN MODEL.md NOW. The gates table moved to the
     # README only at 2.28.0, and a fixture that typed `source_change` would have planted nothing here.
-    _role = (atlas.atlas().get("runtime_roles") or {}).get("multica") or "multi_agent_host"
+    _role = (atlas.atlas().get("runtime_roles") or {}).get("vscode") or "interactive_ide_agent_host"
     _role = str(_role.get("role") if isinstance(_role, dict) else _role)
     with mutated("MODEL.md", lambda t: t.replace(f"`{_role}`", f"`{_role}_edited`", 1)):
         case("a hand-edited generated block FAILS", "a generator nobody checks the output of", True, "generated block", by='generated_errors')
@@ -886,7 +887,7 @@ def main() -> int:
     # `since: '0.9.5'`; a later re-dump wrote it unquoted, the pattern stopped matching, and the
     # harness refused rather than planting nothing — which is the behaviour, but it is the second
     # fixture this session to name a value it could have read.
-    _since = re.search(r"^  since:.*$", (ROOT / "languages/python/tools.yaml").read_text(), re.M).group(0)
+    _since = next(re.finditer(r"^  since:.*$", (ROOT / "languages/python/tools.yaml").read_text(), re.M)).group(0)
     with mutated("languages/python/tools.yaml", lambda s, a=_since: s.replace(a, "  since: 'recently'", 1)):
         case("a provenance version that is not a version FAILS", "provenance that reads as measured when it "
              "was recalled", True, "does not match the declared form", by='manifest_errors')
@@ -922,7 +923,7 @@ def main() -> int:
     # 8. HARD INVARIANTS — every name owned, and each check kills a real defect.
     violations, enforced, declared = atlasinv.invariants()
     assert not violations, f"invariants unowned or violated on a clean tree: {violations}"
-    assert len(enforced) + len(declared) == len(atlas.atlas().get("hard_invariants")), "an invariant is neither enforced nor declared"
+    assert len(enforced) + len(declared) == len(atlas.atlas()["hard_invariants"]), "an invariant is neither enforced nor declared"
     with mutated("atlas.yaml", lambda t: t.replace("  - ci_enforces_contract\n", "  - ci_enforces_contract\n  - invented_invariant\n", 1)):
         case("an invariant with no owner FAILS", "a list of promises that accrues authority from being written down", True, "neither checked nor declared")
     with mutated(".github/workflows/atlas-ci.yml", lambda t: t.replace("python scripts/atlas.py check", "true", 1)):
@@ -980,7 +981,7 @@ def main() -> int:
     # The count is MEASURED, not intended: the first draft said 14 against 12 real cases, and an
     # expectation nobody counted fails every run for the wrong reason. The cross-check case is
     # counted only when it RAN, so an absent library cannot quietly reduce the total.
-    expected = 345 + (1 if cross_checked else 0)
+    expected = 374 + (1 if cross_checked else 0)
     if len(CASES) != expected:
         raise SystemExit(f"CASE COUNT MOVED: {len(CASES)} ran, {expected} expected — a harness that silently skips cases prints a full pass")
     print(f"atlas tests: {len(CASES)}/{expected} pass")

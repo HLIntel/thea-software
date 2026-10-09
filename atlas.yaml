@@ -271,18 +271,24 @@ instrument_roster:
       quietly unreached'
 
   not_a_script:
+    upstream.py: 'the upstream count verify.py imports as its upstream_bound row; it reads the last fetch and never fetches, so `branchstate.py --land` closes a stale count by fetching and rebasing'
     links.py: 'the `thea links` record the site build and the dashboard read, served through knowledge.py and validated against the output schema by cli_test.py; its proof and limits are that instrument''s'
     requirements.txt: 'a pip input read by the install, not an instrument that proves anything'
     edges.py: 'the case -> enforcer edge that atlas_test.py imports; its proof and limits are that instrument''s, and THEA_CASES_FULL=1 is its control route'
     identity_test.py: 'a case module that atlas_guards_test.py imports; its proof and limits are that instrument''s'
     chatskill.py: 'the chat-skill builders that atlasgen.py maps into GENERATED_FILES; its proof and limits are that instrument''s'
     floor_test.py: 'a case module that atlas_guards_test.py imports; its proof and limits are that instrument''s'
+    bounds_test.py: 'a case module that atlas_guards_test.py imports; its proof and limits are that instrument''s'
     vanish_test.py: 'a case module that atlas_guards_test.py imports; its proof and limits are that instrument''s'
+    deps_test.py: 'a case module that atlas_guards_test.py imports; its proof and limits are that instrument''s'
+    facts_test.py: 'a case module that atlas_guards_test.py imports; its proof and limits are that instrument''s'
     consumer_test.py: 'a case module that atlas_guards_test.py imports; its proof and limits are that instrument''s'
     installcheck.py: 'the documented-install runner that `cli_test.py --install` runs and atlasinv checks statically; its proof and limits are that instrument''s'
     shebang_test.py: 'a case module that atlas_guards_test.py imports; its proof and limits are that instrument''s'
     fetch_test.py: 'a case module that atlas_guards_test.py imports; its proof and limits are that instrument''s'
     signature_test.py: 'a case module that atlas_guards_test.py imports; its proof and limits are that instrument''s'
+    artifact_edges_test.py: 'a case module that atlas_guards_test.py imports; its proof and limits are that instrument''s'
+    upstream_test.py: 'a case module that atlas_guards_test.py imports; its proof and limits are that instrument''s'
     requirements.lock.txt: 'the hash-pinned closure of that input, verified by the build, not an instrument'
     build-requirements.lock.txt: 'the hash-pinned build tools the release job installs, not an instrument'
 
@@ -1033,6 +1039,12 @@ example_runners:
   zig:        {official: {index: 'https://ziglang.org/download/index.json', version: 0.16.0,
                           sha256: b23d70deaa879b5c2d486ed3316f7eaa53e84acf6fc9cc747de152450d401489},
                steps: [[zig, test, '{file}']]}
+  # CONFIG AND DATA (3.54.0): each format's example is RUN through its parser — the reader is the runtime.
+  json:       {steps: [[jq, empty, '{file}']]}
+  yaml:       {brew: yamllint, steps: [[yamllint, -d, '{extends: relaxed, rules: {line-length: disable}}', '{file}']]}
+  toml:       {brew: taplo, steps: [[taplo, check, '{file}']]}
+  dockerfile: {brew: hadolint, steps: [[hadolint, --failure-threshold, error, '{file}']]}
+  thea:       {steps: [[thea, compile, '{file}']]}
 
 external_versions:
   mcp_specification: '2026-07-28'
@@ -1056,7 +1068,7 @@ external_versions:
 # atlas.yaml's own `version:` is checked apart; an empty roster here fails rather than passing.
 version_sites:
   MODEL.md: '^\*\*Control plane version: (\S+)\*\*'
-  README.md: '^- \*\*contract version:\*\* (\S+) —'
+  README.md: '^- \*\*(\S+)\*\* contract version —'
   ABOUT.md: '^\*\*Repository contract: v(\S+)\*\*'
   SECURITY.md: '^\*\*Repository contract: v(\S+)\*\*'
   docs/VERSIONING.md: '^Current version: (\S+)$'
@@ -1081,6 +1093,7 @@ generated_files:
   - CLAUDE.md
   - AGENTS.md
   - .agent/bootstrap.json
+  - .agent/facts.json
 
 # EVERY MARKDOWN FILE HAS A CLASS, AND EACH CLASS A RULE (3.44.0) — scripts/mdshape.py. `living` (the
 # default) is rewritten in place: capped, no narration, reachable. `record` is preserved: append-only, and
@@ -1097,6 +1110,9 @@ markdown_policy:
   entries: [README.md, AGENTS.md, MODEL.md, docs/INDEX.md]
   loaded_by_harness: [.github/]
   oversize: {}
+  # ONE OWNER-APPROVED REWRITE per record, keyed to the blob of the result (mdshape.preservation_errors):
+  # 3.53.0 condensed the changelog to one sentence per kept version and dropped untagged, unreferenced ones.
+  rewrites: {docs/VERSIONING.md: 'c450bafa682af059461fccbecc61cb7958f16bf9'}
 
 # WHERE A FILE SITS IN A SYSTEM (3.46.0). An agent attacking a codebase needs the LAYER before the
 # file: a change to a migration is not a change to a component, and the gates, reviewers and blast
@@ -1221,16 +1237,26 @@ artifact_routes:
   '.r': r
   '.wat': webassembly
   '.wasm': webassembly
+  # CONFIG AND DATA ROUTES (3.54.0): 212 tracked files had no route, so no gate ran on them at
+  # commit. A filename in project_manifests is matched FIRST, so wrangler.toml stays cloudflare's.
+  '.json': json
+  '.yaml': yaml
+  '.yml': yaml
+  '.toml': toml
+  '.md': markdown
+  '.thea': thea
 
 routing_policy:
   precedence:
     - explicit_path_or_task_override
     - shebang_interpreter
-    - artifact_extension
     - project_manifest
+    - artifact_extension
     - language_directory
     - issue_labels
     - generic_fallback
+  # A document route yields to the pack directory holding it: a pack's own guide is the pack's.
+  document_routes: [markdown]
   shebang_dialects:
     why: 'a suffix names a family and the first line names the interpreter. `.sh` routes to bash, and 19
       zsh scripts in a consumer were refused by `bash -n` for zsh syntax; the interpreter the file names
@@ -1310,13 +1336,16 @@ context_policy:
   # AT rather than shipped, because a wheel carrying the atlas would be a vendored copy that ages.
   install_footprint:
     runtime_dependencies: 1
+    # EVERY IMPORT FROM OUTSIDE THE STDLIB AND THIS TREE, BY ROLE (3.54.0): runtime ships with the
+    # install, optional is caught. contextcost.third_party_errors refuses an import missing here.
+    third_party: {yaml: runtime, jsonschema: optional}
     # WHAT AN INSTALL ACTUALLY PULLS IN, not what requirements.txt names. "One dependency" counted
     # from direct lines is a FALSE MINIMUM the day that dependency gains its own: an average npm
     # package brings ~79 others (Zimmermann et al., USENIX Security 2019). The hash lock is the
     # closure, because --require-hashes refuses anything it does not pin; the invariant
     # dependency_count_is_the_closure holds this number to the lock AND to the installed metadata.
     resolved_closure: 1
-    module_bytes: 9199
+    module_bytes: 10477
     slack_bytes: 2048
     # A RISE MUST NAME WHAT EARNED IT. Written as only-falls, this ratchet twice refused a genuine
     # capability and was twice paid for by removing something real — which is the ratchet working.
@@ -1326,7 +1355,10 @@ context_policy:
     raised_for: '3.53.0 RAISED to the measured launcher, for one capability: fetch the release atlas
       on first run (a pipx install has no checkout), sha256-checked, stdlib only. It must ship in the
       wheel, so it cannot be moved out. 3.7.0 had RESET this to the launcher alone (atlas_cli); the
-      harness runs from the resolved atlas, bounded by code_shape.'
+      harness runs from the resolved atlas, bounded by code_shape. 3.54.0 RAISED 9199 -> 10483 for one
+      more: the fetched tree is LOCKED after download, read-only with its bytecode kept outside, and
+      every run re-hashes it against the manifest it was unpacked with, refusing an edited, added or
+      removed file (fetch_test plants each).'
   # HOW MANY PACKS SHIP SOMETHING THAT RUNS — COUNTED, BECAUSE A CLEAN PASS OVER TEN EXAMPLES AND
   # A CLEAN PASS OVER THIRTY-FIVE PRINT THE SAME WORD. `exrun` reported "10 passed, 0 failed" and
   # said nothing about the routes it never looked at, which is a roster narrowing silently: the
@@ -1344,7 +1376,9 @@ context_policy:
   # counts are held exactly, so adding a route or an instrument is refused until this line moves —
   # and a line that moves up names its reason in the same diff that reviewers read.
   surface:
-    routes: 36
+    routes: 42
+    routes_raised_to_42: 212 tracked files - config, data, documents and .thea programs - had no route,
+      so no check ran on them at commit; six format packs give each one its parser as the gate
     instruments: 82
     raised_to_73: a host whose scheduled jobs fire at deleted targets reported green on two hosts —
       the sweep and its planted cases are depth on proof of change, not a new pack
@@ -1464,6 +1498,11 @@ verification_policy:
   # THE PACK'S FORMATTER, ADOPTED ON ITS OWN TREE: one reformat commit (in .git-blame-ignore-revs);
   # files the cap forbids reformatting are listed in pyproject.toml [tool.ruff.format] exclude.
   - {id: format, argv: [ruff, format, --check, .], mutates: false, machine_dependent: false}
+  # THE PACK'S DECLARED TYPE CHECKER, ON ITS OWN TREE (3.54.0), pinned, at zero errors. No findings
+  # baseline: new_violations_cannot_hide_in_baseline refuses one, so every error was fixed first.
+  - {id: typecheck, argv: [uvx, basedpyright@1.40.2], mutates: false, machine_dependent: true,
+     why_machine_dependent: 'the checker is fetched by version on first run, so a machine with no
+       package runner or no network reports NOT RUN where another one runs it'}
   # THE RUNG THEA SHIPS TO OTHER REPOSITORIES, finally run on this one (3.32.0). `--tracked` and
   # not a bare `check`: with no argument it swept zero files and exited 0, which is the vacuous
   # pass this repository refuses everywhere else.
@@ -1586,6 +1625,64 @@ data_classes:
     required_metadata: [path, checksum, symbols, route, last_verified_contract]
     fails_by: a chunk that ends mid-function, which retrieves as a confident fragment of something
       that was never true on its own
+
+# CAPABILITIES BELONG TO EDGES, NOT AGENTS. A task over documents, spreadsheets, decks and data is
+# a path from one data class to another, so it never needs a format-specific agent: it needs edges.
+# Each edge names the typed PLAN a model writes, the deterministic step that APPLIES it, and the
+# gate that proves the result. A model that also applies its own plan grades its own work, so an
+# edge applied by a model is refused. Same contract as an instrument: proves, does_not_prove,
+# closed_by. `from` and `to` are data_classes keys, so a new format joins a class, never the graph.
+artifact_edges:
+  extract:
+    from: [unstructured]
+    to: [semi_structured]
+    examples: ['pdf to records', 'transcripts to claims', 'office documents to fields']
+    plan: a named schema to fill, every field carrying the source span it came from
+    applied_by: a schema-validated extractor that rejects a field with no span
+    gate: citation_check
+    proves: each extracted field opens to the passage it was read from
+    does_not_prove: that the passage is true, or that a field absent from the schema was absent
+    closed_by: a reader opening the cited span, and the schema naming every field asked for
+  tabulate:
+    from: [semi_structured]
+    to: [structured]
+    examples: ['records to csv', 'records to an xlsx sheet', 'claims to a table']
+    plan: a column map from record path to typed column, units named
+    applied_by: a deterministic writer that refuses a row the column map cannot type
+    gate: schema_validation
+    proves: every row has the declared columns, types and units
+    does_not_prove: that the records were complete before they were tabulated
+    closed_by: the extract edge's citation_check, and a printed row count beside the input count
+  analyze:
+    from: [structured]
+    to: [semi_structured]
+    examples: ['a sheet to findings', 'a dataset to trends', 'two tables reconciled']
+    plan: a query the model writes and the system runs, never a figure the model recalls
+    applied_by: the query engine, which prints its own row count so absent is not read as zero
+    gate: known_answer_tests
+    proves: each finding is a query result over named rows
+    does_not_prove: that the question asked was the right one
+    closed_by: a person reading the query beside the finding it produced
+  mutate:
+    from: [structured]
+    to: [structured]
+    examples: ['an xlsx model edited', 'a forecast assumption changed', 'a table cleaned']
+    plan: a list of cell, formula and row operations with the invariants that must still hold
+    applied_by: a deterministic applier that recalculates and diffs before writing
+    gate: invariant_property_test
+    proves: the declared invariants hold after the operations, and the diff is only those cells
+    does_not_prove: that the invariants declared are the ones the owner cares about
+    closed_by: the structural diff shown for approval before the file is written
+  compose:
+    from: [semi_structured]
+    to: [unstructured]
+    examples: ['findings to a pptx deck', 'findings to a docx report', 'a summary with citations']
+    plan: a slide or section list, each claim naming the finding it rests on
+    applied_by: a template renderer that refuses a claim with no finding behind it
+    gate: artifact_verification
+    proves: the file renders and every claim in it traces to a finding
+    does_not_prove: that the narrative weighs the findings fairly
+    closed_by: the rendered artifact reviewed by the person who will present it
 
 # WHERE A FACT LIVES, AND WHY IT MAY NOT LIVE ANYWHERE ELSE.
 #
@@ -2058,6 +2155,13 @@ agent_failure_modes:
     looks_like: a passing test that planted nothing
     sightings: 4
     prevented_by: atlas_test.mutated, which refuses when the planted text equals the original
+  a_suite_that_writes_the_owners_state:
+    tell: 'a ledger or registry under the owner''s home holding a planted fixture''s name, or one session re-firing the same refusal shape dozens of times'
+    enforced_by: [agents_test.run]
+    shape: a test harness that inherits the owner's state directory, so every planted refusal, verify and session lands in the record the README counts as use
+    looks_like: busy real usage; it is the suite's own plants
+    sightings: 2
+    prevented_by: the planted suite pins THEA_HOME to its own temporary directory at start, and a planted case refuses when the ledger path resolves under the owner's home
   a_turn_spent_rewording_instead_of_building:
     tell: a ratchet breach fixed by trimming and re-running the check, once per sentence, until it passes
     enforced_by: [contextcost._largest_parts, atlasinv._inv_code_blobs_are_bounded]
@@ -2554,6 +2658,15 @@ agent_failure_modes:
     prevented_by: 'resolve paths inside the command (`thea --where`, `git -C "$(...)"`, a search) or name only paths seen on that machine'
     enforced_by: [schedtargets.job_faults, schedtargets_test.run]
     closed_by: 'the runtime output style that governs command blocks, which requires resolved or verified paths'
+  a_shell_override_bypasses_audit_shebang:
+    shape: 'an agent runs an audit through a shell other than its declared interpreter, so shell-specific syntax aborts before the audit observes its target'
+    looks_like: 'a closing audit command that exits nonzero without reporting its intended verdict'
+    tell: 'the audit names its required interpreter and rejects the supplied shell before any target observation'
+    sightings: 1
+    prevented_by: 'execute an audit directly so its shebang selects the interpreter; use an explicit interpreter only after reading the script header'
+    unenforceable: 'an interactive shell can invoke any executable through an incompatible interpreter'
+    closed_by: 'agent command discipline: preserve executable invocation unless the header was inspected'
+    intake: 3.52.0
   a_guard_that_passes_when_its_input_is_missing:
     shape: 'a guard answers a MISSING input the way it answers a clean one — `if not path.exists(): continue` or `return []` — so deleting, renaming or never creating the file it checks turns the guard green'
     looks_like: 'a guard that has passed on every run since a move, with nothing in its output to say it read nothing'
@@ -2777,6 +2890,22 @@ agent_failure_modes:
     tell: a failing path begins with .claude/worktrees/ or another directory that holds its own .git
     sightings: 2
     prevented_by: files_under reads git's own file set and prunes every directory holding a .git; the agent hook lane-guard refuses a git worktree add into a work tree; worktrees live beside the repo in <repo>-wt/
+  a_home_folder_that_is_a_repository:
+    intake: 3.53.0
+    shape: 'the home folder holds a .git (a clone of a public repository with an unborn branch and no tracked files), so every folder under home that is not its own repository resolves its top level to home, and its worktrees hang off that hidden .git'
+    looks_like: '`git rev-parse --show-toplevel` in a tool-config folder prints the home folder instead of failing, and `git status` there lists the whole home tree as untracked'
+    tell: 'the home folder has a .git entry; `git worktree list` from a worktree names the home folder as the main tree with HEAD 0000000'
+    sightings: 1
+    prevented_by: 'thea shell refuses `git init` and `git clone` into the home folder. To repair: check every worktree for uncommitted work and landed state, `mv ~/.git ~/Projects/<name>.git`, set core.bare true, then `git worktree repair`. With extensions.worktreeConfig on, the shared core.bare=true leaks into every worktree (exit 128 "must be run in a work tree"), so each worktree also needs core.bare false in its own config.worktree; `git branch -d` then judges merged against the unborn HEAD, so confirm with `merge-base --is-ancestor <b> origin/main` before `-D`'
+    enforced_by: [agentpolicy.shell_verdict]
+  a_blocked_listing_read_as_absence:
+    intake: 3.53.0
+    shape: 'an agent hunts for directories a sweep stopped listing and lists the Trash with stderr discarded; macOS privacy control denies the listing, the error goes to /dev/null, the empty output reads as "not there", and the agent reports repositories lost that a sibling session had moved there on the owner''s instruction'
+    looks_like: '`ls -l ~/.Trash 2>/dev/null` prints `total 0` and the report says the missing repositories are in no archive and not in the Trash'
+    tell: 'the same listing without the redirect says "Operation not permitted"; `[ -d <exact path> ]` finds the directory'
+    sightings: 1
+    prevented_by: 'thea shell refuses a listing or search of the Trash whose stderr is discarded; probe an exact path with `[ -d ]` or ask the session that moved it. A recursive delete of a repository-level directory is refused too, so a removed repository is always a move into ~/Projects/_archives or the Trash, and absence is never inferred from a listing'
+    enforced_by: [agentpolicy.shell_verdict]
   an_interpreter_below_the_declared_floor:
     signature:
       - 'No module named ''tomllib'''
@@ -2926,6 +3055,14 @@ agent_success_patterns:
     proven_by: [enforce.measure, atlascore.shebang_gate_argv, contextcost.generated_attribute_errors]
     kinds: [reusable, frameworkable, ai_beneficial]
     reused: 1
+  pin_the_suite_to_its_own_home:
+    move: 'a harness that plants refusals, verifies and sessions points every state directory at a temporary home before its first case'
+    when: 'a test suite runs code that writes a ledger, registry or cache under the owner''s home'
+    verification: 'a planted case refuses when the ledger path resolves under the owner''s home'
+    evidence: 'the planted suite filled the owner''s field ledger with a planted bad.py verify and two re-fired refusal shapes'
+    pairs: [a_suite_that_writes_the_owners_state]
+    proven_by: [agents_test.run]
+    kinds: [reusable, frameworkable, ai_beneficial]
   plant_a_defect_that_differs:
     move: 'plant a defect whose text differs from the original and assert the refusal by its message, never by a literal that later moves'
     when: 'adding a test for a guard'
@@ -3325,6 +3462,7 @@ linguist_names:
   chapel: Chapel
   cpp: C++
   cuda: Cuda
+  dockerfile: Dockerfile
   elixir: Elixir
   forth: Forth
   fsharp: F#
@@ -3333,8 +3471,10 @@ linguist_names:
   go: Go
   hare: Hare
   haskell: Haskell
+  json: JSON
   julia: Julia
   lean4: Lean
+  markdown: Markdown
   mojo: Mojo
   nim: Nim
   ocaml: OCaml
@@ -3348,10 +3488,13 @@ linguist_names:
   scala: Scala
   sql: SQL
   swift: Swift
+  thea: null
+  toml: TOML
   typescript: TypeScript
   uiua: Uiua
   v: V
   webassembly: WebAssembly
+  yaml: YAML
   zig: Zig
 
 # WHO DECIDES EACH STOP AND ESCALATE CONDITION — a function, or a named closer. Declared at 2.27.0
@@ -3393,6 +3536,7 @@ project_manifests:
   wrangler.toml: cloudflare
   wrangler.json: cloudflare
   wrangler.jsonc: cloudflare
+  Dockerfile: dockerfile
 
 # WHAT EACH RUNTIME LOADS BY ITSELF, Claude first — declared once, measured on every build into the
 # README by contextcost.tokens, and checked against each adapter's own "How it loads" section.
@@ -3638,6 +3782,11 @@ language_selection:
     need: the data is relational and the question has an exact answer
     packs: [sql, python, r]
     when_not: the question is about meaning rather than rows — see data_classes/unstructured
+    maturity: production
+  config_and_data:
+    need: the file is read by a program, not run — configuration, records, containers, documents, Thea programs
+    packs: [json, yaml, toml, dockerfile, markdown, thea]
+    when_not: the value needs logic; a config that grows conditionals is a program in the wrong language
     maturity: production
   shell_and_glue:
     need: joining programs that already exist, on one machine, with exit codes
@@ -4086,6 +4235,12 @@ agent_policy:
   # THE SHELL SHAPES A REGEX DECIDES (3.44.0): each row a measured sighting, read by agentpolicy.shell_verdict;
   # each reason names the replacing move, so a refusal teaches rather than blocks.
   shell_shapes:
+    # SIGPIPE UNDER PIPEFAIL (3.53.0). A step cut a 498-line log with `| head -400` under `set -o pipefail`:
+    # head exits at 400, the producer dies of SIGPIPE, and pipefail turns that into the step's failure.
+    - pattern: '(?s)\bpipefail\b.*\|\s*head\b'
+      reason: 'under `pipefail`, `| head` exits early and the producer dies of SIGPIPE: the pipeline fails exactly when there is MORE output than asked for. Bound the producer (`git log -n 400`), or read it all (`sed -n 1,400p`)'
+      refuses: ["set -euo pipefail; git log --oneline | head -400 > recent.txt"]
+      allows: ["set -euo pipefail; git log --oneline -n 400 > recent.txt", "set -o pipefail; git log --oneline | sed -n 1,400p", "git log --oneline | head -400"]
     - pattern: '\b(?:pgrep|pkill)\b[^;&|]*\s-[a-zA-Z]*f[a-zA-Z]*\s+[''\"]?(?!\[)[^\s''\"\[;&|]+[''\"]?(?:\s|$|[;&|])'
       reason: '`pgrep -f`/`pkill -f` on this pattern also matches the shell running it — the wait never ends, the kill takes its caller. Bracket the first character (`[s]leep`), use a PID, or wait on the harness notification'
       refuses: ["while pgrep -f sleep; do :; done"]
@@ -4119,7 +4274,7 @@ agent_policy:
     # or then/do/else, then optional VAR=value, `command`, and `-C <dir>`.
     - pattern: '(?:^|[;&|(\n]\s*|\b(?:then|do|else)\s+)(?:[A-Za-z_]\w*=\S*\s+)*(?:command\s+)?git(?:\s+-[Cc]\s+\S+)*\s+pull\b(?![^;&|\n]*(?:--rebase|--ff-only|\s-r\b))'
       reason: 'a bare `git pull` merges, and on a conflict leaves the half-merge in the tree — every later pull then refuses. Use `git pull --rebase --autostash` (or `--ff-only`), and abort on conflict'
-      refuses: ["git -C ~/vault pull origin main", "cd ~/vault && git pull"]
+      refuses: ["git -C ~/notes pull origin main", "cd ~/notes && git pull"]
       allows: ["git pull --rebase --autostash origin main", "grep -rn \"git pull\" scripts"]
     # NEVER DESTROY UNCOMMITTED WORK, NEVER FORCE A BACKUP, BYPASS IS THE OWNER'S CALL: three rules the
     # owner's instructions declared and nothing enforced, so an agent shell could break each silently.
@@ -4137,8 +4292,19 @@ agent_policy:
       allows: ["git clean -nd"]
     - pattern: '(?:^|[;&|(\n]\s*|\b(?:then|do|else)\s+)(?:[A-Za-z_]\w*=\S*\s+)*(?:command\s+)?git(?:\s+-[Cc]\s+\S+)*\s+(?:checkout\b(?=[^;&|\n]*\s(?:--|\.)(?:\s|$))|restore\b(?![^;&|\n]*--staged))'
       reason: 'discards the uncommitted edits to those paths with no stash and no undo. `git stash create` prints a ref-free SHA of the edits without touching the stash stack every worktree shares, and `git stash apply <sha>` restores them; `git restore --staged` only unstages'
-      refuses: ["git checkout -- scripts/atlas.py", "git restore ."]
-      allows: ["git checkout -b lane origin/main", "git restore --staged notes.md"]
+      # THE REASON'S OWN ADVICE HAD NO ACCEPTED FORM (3.53.0): `git stash create x && git checkout -- f` was
+      # refused like a bare discard. `cleared_by` blanks a discard chained by `&&` straight after a
+      # `git stash create` in the same repo (same `-C`, or one `cd` before both); `;`, `||`, another
+      # repo or any step between still leaves the discard refused.
+      cleared_by: 'git(?:\s+-C\s+(?P<repo>\S+))?\s+stash\s+create\b[^;&|\n]*&&\s*git(?(repo)\s+-C\s+(?P=repo))\s+(?:checkout|restore)\b'
+      refuses: ["git checkout -- scripts/atlas.py", "git restore .", "git stash create x; git checkout -- AGENTS.md",
+                "git stash create x || git checkout -- AGENTS.md", "git -C a stash create && git -C b checkout -- f",
+                "git -C a stash create && git checkout -- f", "git stash create && cd b && git checkout -- f",
+                "git stash create && git checkout -- a; git checkout -- b"]
+      allows: ["git checkout -b lane origin/main", "git restore --staged notes.md",
+               "git -C ../lane stash create x && git -C ../lane checkout -- AGENTS.md",
+               "cd ../lane && git stash create x && git checkout -- AGENTS.md",
+               "git stash create > backup.sha && git restore notes.md"]
     - pattern: '(?:^|[;&|(\n]\s*|\b(?:then|do|else)\s+)(?:[A-Za-z_]\w*=\S*\s+)*(?:command\s+)?git(?:\s+-[Cc]\s+\S+)*\s+(?:commit|push|merge|rebase|am|cherry-pick|revert)\b(?=[^;&|\n"'']*\s--no-verify\b)'
       reason: '`--no-verify` skips the pre-commit and pre-push rungs, so a red gate lands looking green. The bypass is the owner''s call: fix the rung, or ask'
       refuses: ["git commit --no-verify -m wip"]
@@ -4160,7 +4326,19 @@ agent_policy:
       refuses: ["docker run -p 8080:8080 img"]
       allows: ["docker run -p 127.0.0.1:8080:8080 img"]
     - pattern: '\b(?:KGAT_[0-9a-f]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|hf_[A-Za-z0-9]{30,}|xox[abpr]-[A-Za-z0-9-]{10,})'
-      reason: 'a credential typed into a command line lands in shell history, the agent transcript and any file the line redirects to — and a command handed to someone else runs wherever they paste it. Pass it by NAME from the keys file (`set -a; . ~/.claude-keys.env; set +a`), never as a literal'
+      reason: 'a credential typed into a command line lands in shell history, the agent transcript and any file the line redirects to — and a command handed to someone else runs wherever they paste it. Pass it by NAME from the keys file (`set -a; . ~/.secrets.env; set +a`), never as a literal'
+    - pattern: '\brm\s+(?=(?:\S+\s+)*?(?:-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\s)(?:[^;&|\s]+\s+)*?[''"]?(?:~|\$HOME|\$\{HOME\}|/Users/[^/\s''"]+|/home/[^/\s''"]+)/(?:Projects/)?[^/\s''";&|]+/?[''"]?(?=\s|$|[;&|)])'
+      reason: 'a recursive delete of a directory directly under the home folder or ~/Projects removes a whole repository, lane or tool config with no undo, and a repository with no remote takes its only history with it. Read `git -C <dir> status` and `git -C <dir> remote -v`, then MOVE it: `mv <dir> ~/Projects/_archives/<name>-<version>`; a worktree leaves through `git worktree remove`'
+      refuses: ["rm -rf ~/Projects/old-tool", "rm -r -f $HOME/.toolrc.d", "rm -fr ~/Projects/a ~/Projects/b", "rm --recursive \"$HOME/Projects/lane\""]
+      allows: ["rm -rf ~/Projects/app/build", "rm -rf ./build", "rm -f ~/.zcompdump", "rm -rf ~/Projects/_archives/old-tool-1.0"]
+    - pattern: '\bgit\s+(?:init|clone)\b[^;&|]*\s[''"]?(?:~|\$HOME|\$\{HOME\}|/Users/[^/\s''"]+|/home/[^/\s''"]+)/?[''"]?(?=\s*(?:$|[;&|)]))|\bcd\s+[''"]?(?:~|\$HOME|\$\{HOME\})/?[''"]?\s*(?:&&|;)\s*git\s+(?:init|clone)\b'
+      reason: 'a repository rooted at the home folder makes every folder under it that is not its own repository resolve to that work tree, so a stray `git add` in a tool-config folder stages keys and private paths into a repository whose remote may be public. Clone or init into ~/Projects/<name>; a repository that must hold worktrees lives bare at ~/Projects/<name>.git'
+      refuses: ["git init ~", "git clone https://github.com/o/r ~", "git clone --depth 1 https://github.com/o/r $HOME/", "cd ~ && git init"]
+      allows: ["git init ~/Projects/new-tool", "git clone https://github.com/o/r ~/Projects/r", "git init", "cd ~/Projects/x && git init"]
+    - pattern: '\b(?:ls|find|du)\b[^;&|]*(?:~|\$HOME|\$\{HOME\}|/Users/[^/\s''"]+)/\.Trash\b[^;&|]*2>\s*/dev/null'
+      reason: 'macOS privacy control denies listing the Trash to most processes; with stderr discarded the "Operation not permitted" vanishes and the empty output reads as absence. Drop the redirect, or probe the exact path with `[ -d <path> ]`'
+      refuses: ["ls -lt ~/.Trash 2>/dev/null | head -5", "find $HOME/.Trash -maxdepth 1 -name 'stub-*' 2>/dev/null"]
+      allows: ["ls -lt ~/.Trash", "[ -d ~/.Trash/stub-x ] && echo found"]
   schema: tools/agent-task.schema.json
   # THE AUTHORED FORM IS THE ONE THAT RUNS (3.48.0). The .json beside it is the compiler's oracle
   # (the .thea must compile to it by contract hash), never a second contract anyone writes.
@@ -4289,7 +4467,7 @@ agent_policy:
       pattern: '^git\s+(push\s+(-f|--force)|reset\s+--hard|clean\s+-[a-zA-Z]*f|filter-branch|update-ref\s+-d)\b'
       why: the repository is the evidence; an agent that can rewrite it can hide the change it made
     credential_read:
-      pattern: '(\.ssh/|\.aws/|\.netrc|id_rsa|id_ed25519|\.claude-keys|/credentials\b)'
+      pattern: '(\.ssh/|\.aws/|\.netrc|id_rsa|id_ed25519|[\w.-]*keys\.env\b|/credentials\b)'
       why: a task that needs a credential asks for approval; a task that reads one is exfiltration
     recursive_delete:
       pattern: '\brm\s+-[a-zA-Z]*r[a-zA-Z]*f|\brm\s+-[a-zA-Z]*f[a-zA-Z]*r'
@@ -4400,7 +4578,8 @@ agent_policy:
       point of establishing what happened is not an audit
     events: [task_created, plan_resolved, policy_denied, command_started, command_finished,
              file_changed, approval_presented, approval_refused, budget_exhausted, gate_result,
-             scope_expanded, task_finished]
+             scope_expanded, task_finished, field_refused, field_verify, field_lesson,
+             field_landed, session_ended]
 
 # A GATE IS A WORD UNTIL SOMETHING CAN RESOLVE IT TO A COMMAND.
 #
@@ -4493,6 +4672,11 @@ gate_tools:
       futhark: [futhark, check]
       odin: [odin, check]
       roc: [roc, check]
+      jq: [jq, empty]
+      yamllint: [yamllint, -d, '{extends: relaxed, rules: {line-length: disable}}']
+      taplo: [taplo, check]
+      hadolint: [hadolint, --failure-threshold, error]
+      thea: [thea, compile]
       wrangler deploy --dry-run --config: [wrangler, deploy, --dry-run, --config]
   # BEHAVIOUR AT COMMIT, BOUNDED (3.16.0): a staged file that IS a test runs under its own runner, when that
   # runner takes one file. The hook proved parsing only; a test file is the one place behaviour is cheap to prove.
@@ -4794,6 +4978,12 @@ branch_policy:
       a branch-count cap of four, five or six would have printed a clean pass over all of it; four
       remote heads from pull requests closed unmerged sat days on the forge, so a remote head no
       local branch tracks is bounded too, and `--sync` deletes it once merged or closed
+  # THE UPSTREAM COUNT (3.53.0): commits on origin/<default_base> a lane lacks, from the last fetch.
+  upstream_bound:
+    max_behind_commits: 5
+    why: unpushed_bound capped one direction only; a lane landing behind a moving default branch was
+      hand-rebased twice in one landing, two commits then one, and the conflicts grow with the count;
+      verify fails past the bound so the rebase happens while it is still small
   default_base: main
   permanent_language_branches: false
   language_lane_pattern: 'lang/<language>/<topic>'
@@ -4831,9 +5021,9 @@ benchmark_floors:
 agent_roles:
   implementer: {task_profile: implementation, process: implementation, may: 'edit the paths the plan declared and run their gates', may_not: 'refactor beside the change or widen scope', hands_back: 'the diff and every gate result, NOT RUN included', ends_when: 'thea verify exits 0'}
   debugger: {task_profile: debugging, process: debugging, may: 'reproduce, bisect and add the failing test first', may_not: 'fix before the failure is reproduced', hands_back: 'the reproducing test and the fix', ends_when: 'the reproducing test passes and verify exits 0'}
-  reviewer: {task_profile: default, may: 'read the diff, run gates and name findings', may_not: 'edit the code under review', hands_back: 'findings as path:line — what — fix, ranked', ends_when: 'every changed file has been read against its gates'}
-  verifier: {task_profile: default, may: 'run thea verify and read its record', may_not: 'change code to make a gate pass', hands_back: 'the verify record, PASS FAIL and NOT RUN per gate', ends_when: 'verify has run once on the final tree'}
-  researcher: {task_profile: research, may: 'read, search and fetch sources', may_not: 'edit the tree or state an unsourced number', hands_back: 'claims labelled CONFIRMED REPORTED INFERRED or UNCERTAIN, each sourced', ends_when: 'the question is answered or declared unanswerable here'}
+  reviewer: {writes: false, task_profile: default, may: 'read the diff, run gates and name findings', may_not: 'edit the code under review', hands_back: 'findings as path:line — what — fix, ranked', ends_when: 'every changed file has been read against its gates'}
+  verifier: {writes: false, task_profile: default, may: 'run thea verify and read its record', may_not: 'change code to make a gate pass', hands_back: 'the verify record, PASS FAIL and NOT RUN per gate', ends_when: 'verify has run once on the final tree'}
+  researcher: {writes: false, task_profile: research, may: 'read, search and fetch sources', may_not: 'edit the tree or state an unsourced number', hands_back: 'claims labelled CONFIRMED REPORTED INFERRED or UNCERTAIN, each sourced', ends_when: 'the question is answered or declared unanswerable here'}
   orchestrator: {task_profile: autonomous_agent, process: autonomous_agent, may: 'split work into lanes with task contracts and land them', may_not: 'edit inside a lane it handed off', hands_back: 'landed pull requests and each lane outcome', ends_when: 'every lane is landed or escalated'}
 
 # A DECISION RESTS ON EVIDENCE (3.21.0): data with its source, the trend, and the human side — who pays for
@@ -4908,8 +5098,12 @@ delegation_contract:
 # roster is green on the machine that has it and BLANK on a fresh clone — not an error, a wrong answer.
 # Names only; a value never enters this tree. `set_by` says who supplies it, so an absent one is diagnosable.
 declared_inputs:
+  CLAUDE_CODE_SESSION_ID: {why: 'the runtime session a field event belongs to, so a re-fire and a recovery join within one session', set_by: 'the agent runtime', absent: 'the event is counted but joins nothing, and the unjoined share is printed'}
+  THEA_TASK_ID: {why: 'the task a scheduler ran this session for, so a field event joins its run outcome', set_by: 'the launcher that starts the agent', absent: 'no task is recorded on the event'}
+  THEA_AGENT: {why: 'the agent name a hook heartbeat and a field event record', set_by: 'the launcher that starts the agent', absent: 'a hook beat is recorded as claude-code; a field event names no agent'}
   THEA_ROOT: {why: 'the atlas an installed CLI resolves against, when it is not the checkout it was run from', set_by: the operator, absent: 'the installed launcher falls back to its own resolution'}
   THEA_NO_FETCH: {why: 'set to 1, an installed CLI with no declared root refuses instead of downloading its release atlas', set_by: the operator, absent: 'the release tarball of the installed version is fetched, sha256-checked, into the user cache'}
+  PYTHONPYCACHEPREFIX: {why: 'Python reads it for where bytecode goes; an installed CLI that fetched its release sets it beside the locked tree, so no run writes into it', set_by: 'atlas_cli, after a fetch, for itself and every child', absent: 'bytecode beside each source, as Python does by default'}
   XDG_CACHE_HOME: {why: 'where an installed CLI caches the release atlas it fetched, under thea/atlas-<version>', set_by: 'the operator, or the desktop session', absent: '~/.cache is used'}
   CODE_DEVELOPMENT_ROOT: {why: 'the pre-rename name for the same root, still answered so an older caller keeps working', set_by: the operator, absent: 'THEA_ROOT is used instead'}
   THEA_MCP_ISOLATE: {why: 'makes every MCP call spawn a fresh interpreter instead of forking the warm server — the old route, kept behind a switch', set_by: the operator, absent: 'calls fork from the warm server while its loaded modules still match their files'}
@@ -5010,11 +5204,9 @@ issue_routes:
 
 runtime_roles:
   # A HOST IS NOT A MODEL, and the difference decides where a runtime belongs. `model_routes` says
-  # which MODEL answers a kind of work; these say what a RUNTIME is for. Multica is the second kind
-  # and only the second kind: it is one interface in which several agents are reachable at once,
-  # each over its own native CLI, so it appears here and in no model route. It loads no entry file
-  # of its own -- the CLIs it drives each read theirs -- so it has no runtime_entry row either.
-  multica: multi_agent_host
+  # which MODEL answers a kind of work; these say what a RUNTIME is for. A runtime declared
+  # `multi_agent_host` is one interface in which several agents are reachable at once, each over its
+  # own native CLI, so it may appear here and in no model route (declcheck refuses the route).
   vscode: interactive_ide_agent_host
   opencode: terminal_agent_workspace
   github_actions: authoritative_repository_verification

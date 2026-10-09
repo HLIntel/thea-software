@@ -101,7 +101,7 @@ def worktrees() -> int:
         try:
             age, dirty, ahead, same = _lane_state(path, base, now) if not row.get("prunable") else (0.0, 0, 0, False)
         except (FileNotFoundError, NotADirectoryError):  # another session removed it after `worktree list`
-            row["prunable"], age, dirty, ahead = "gone mid-walk", 0.0, 0, 0
+            row["prunable"], age, dirty, ahead, same = "gone mid-walk", 0.0, 0, 0, False
         if row.get("prunable"):
             verdict = "PRUNABLE — its directory is gone"
         else:
@@ -175,7 +175,9 @@ def vanished() -> set[str]:
     now = " ".join(
         (ROOT / c).read_text(encoding="utf-8", errors="ignore") for c in changed_paths() if (ROOT / c).is_file()
     )
-    return {w for w in candidates if w not in now}
+    # A PATH STILL IN THE TREE = NOT VANISHED (3.54.0): llms.txt dropping `languages/go/README.md` flagged
+    # four files naming a README that was never removed.
+    return {w for w in candidates if w not in now and not ("/" in w and (ROOT / w).exists())}
 
 
 def review() -> int:
@@ -245,7 +247,7 @@ def main(argv: list[str]) -> int:
         return repos(Path(argv[1]) if len(argv) > 1 else ROOT.parent)
     if argv[:1] == ["worktrees"]:
         return worktrees()
-    print(__doc__.split("\n\n", 1)[0])
+    print((__doc__ or "").split("\n\n", 1)[0])
     print("usage: staleness.py oldest [N] | review | repos [root] | worktrees")
     return 2
 

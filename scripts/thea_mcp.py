@@ -42,17 +42,25 @@ from commands import command_table
 
 # THE ONE WRITE THIS ROUTE MAKES (3.51.0) is outside the tree: a heartbeat in the agent registry, so a
 # client that runs only this server is still counted. It fails open: a missed beat never fails a call.
-CLIENT = {"name": None}
+CLIENT: dict[str, str | None] = {"name": None}
 
 
-def _beat() -> None:
+def _beat(ended: bool = False) -> None:
+    """A heartbeat, or the session's end at stdin EOF. A client that never named itself is not beaten.
+
+    UNNAMED IS A PROBE (3.54.0): 110 of 117 registry records were `mcp-client` in /private/tmp, 108 of
+    them under a second old — the in-process `--check` and test spawns, never a client. The protocol
+    makes `clientInfo` required, so a real client always names itself and nothing is lost by this.
+    """
+    if not CLIENT["name"]:
+        return
     try:
-        agents.beat(CLIENT["name"] or "mcp-client", f"mcp-{os.getpid()}", "mcp", os.getcwd())
+        (agents.end if ended else agents.beat)(CLIENT["name"], f"mcp-{os.getpid()}", "mcp", os.getcwd())
     except (agents.BeatError, OSError) as exc:
         print(f"thea-mcp: no beat recorded: {exc}", file=sys.stderr)
 
 
-MUTATING = {"--write", "--run", "--fix"}  # the safe route is incapable of these, not flagged against them
+MUTATING = {"--write", "--run", "--fix", "--shown"}  # the safe route is incapable of these, not flagged against them
 TIMEOUT = 600
 # Hints for a client's UI only — a client must treat them as untrusted, so the guarantee stays the construction.
 ANNOTATIONS = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
@@ -436,6 +444,8 @@ def serve(handler=None) -> int:
         if reply is not None:
             sys.stdout.write(json.dumps(reply) + "\n")
             sys.stdout.flush()
+    if handler is handle:
+        _beat(ended=True)  # stdin closed: the client disconnected cleanly, so the record says so
     return 0
 
 
