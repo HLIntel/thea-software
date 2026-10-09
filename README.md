@@ -46,48 +46,26 @@ config:
     primaryBorderColor: "#6f9f73"
     primaryTextColor: "#14301a"
     lineColor: "#7f9483"
-    titleColor: "#6f9f73"
-    edgeLabelBackground: "#e6f2e7"
     fontSize: "15px"
   flowchart:
-    subGraphTitleMargin: {top: 4, bottom: 6}
-    padding: 4
-    nodeSpacing: 12
-    rankSpacing: 14
+    padding: 6
+    nodeSpacing: 14
+    rankSpacing: 18
 ---
 flowchart TB
-  accTitle: How Thea proves a change
-  accDescr: any agent, chat or model plugs in, each file routes to its gates, hooks guard, the same gates prove at commit, in CI and in thea verify, anything but PASS is refused, every verdict is kept
-  subgraph ask [1 · plug in]
-    direction LR
-    A([any agent<br>or chat]) --> I[CLI · MCP<br>hooks] --> D[(atlas.yaml<br>42 languages)]
+  accTitle: How Thea is built
+  accDescr: the contract says what must be checked and what counts as proof, one core resolves the file, selects its gates, runs the checks and records the verdict, and the CLI, MCP, hooks with CI and the TheaOS all reach that one core
+  R[contract · atlas.yaml<br>what counts as proof] --> C[one core: resolve, gate,<br>check, record the verdict]
+  C --> doors
+  subgraph doors [ ]
+    direction TB
+    L[CLI<br>commands] ~~~ H[hooks · CI<br>commit, merge]
+    P[MCP<br>agent tools] ~~~ B[TheaOS<br>results, history]
   end
-  subgraph guard [2 · guard]
-    direction LR
-    S([command]) --> W{{23<br>shapes}}
-    W -->|match| Y[refused]
-    W -->|clear| O[runs]
-    E([edit]) --> L[64 gates<br>+ lessons]
-  end
-  subgraph run [3 · prove]
-    direction LR
-    H([commit<br>PR · verify]) --> V{{exit<br>code}}
-    V -->|PASS| M[landed]
-    V -->|else| X[refused]
-  end
-  subgraph learn [4 · learn]
-    direction LR
-    Q[(field<br>ledger)] --> F[112 shapes<br>41 moves] --> N[next port<br>+ judge]
-  end
-  ask --> guard --> run --> learn
+  classDef core fill:#cfe9d2,stroke:#4f9a58,color:#103d17
+  class C core
   classDef band fill:none,stroke:#6f9f73,stroke-dasharray:4 3
-  class ask,guard,run,learn band
-  classDef stop fill:#f6d5d2,stroke:#c0605a,color:#5c1410
-  classDef go fill:#cfe9d2,stroke:#4f9a58,color:#103d17
-  classDef store fill:#d6e4f5,stroke:#5f86b8,color:#0d2a4d
-  class X,Y stop
-  class M,O go
-  class D,Q,V,W store
+  class doors band
 ```
 <!-- END generated: proof-flow -->
 
@@ -127,9 +105,9 @@ Read-only MCP: `thea-mcp`. Other repos: [CONSUMING](docs/CONSUMING.md).
 $ thea port scripts/doctor.py --line
 ◉ scripts/doctor.py │ ⠟backend │ python │ ⌂scripts │ ✓3 │ ⚠1 │ → thea gate scripts/doctor.py
 $ thea port scripts --line
-◎ scripts │ ⠟99 │ ⌂scripts │ → thea brainstorm
+◎ scripts │ ⠟101 │ ⌂scripts │ → thea brainstorm
 $ thea port . --line
-○ . │ ⠟126 ⠿4 ⠁3 │ → thea check
+○ . │ ⠟128 ⠿4 ⠁3 │ → thea check
 ```
 <!-- END generated: port-example -->
 
@@ -159,15 +137,16 @@ compare against pasting every language's tool list.
 - **Tokens:** 89% fewer than pasting every tool list, 51% fewer than blind.
 
 **The repository itself** (recomputed on every build)
-- **1,734** tokens read before routing; the other 205 documents (626 KiB) load only when a route names one.
+- **1,734** tokens read before routing; the other 205 documents (627 KiB) load only when a route names one.
 - **378** language × check pairs (42 languages × 9 checks), all answered: 143 with a command, 235 with a declared *no tool*, 0 silently.
-- **497** mistake kinds planted in the tests, each refused.
-- **17/17** planted breaks refused at commit, in 12 languages; 15 files untested (`enforce.py`, v3.53.0).
-- **18/18** agent-to-agent handoffs carry the right checks with Thea (schema alone → with Thea): Opus 0/6 → 6/6; Sonnet 0/6 → 6/6; Haiku 0/6 → 6/6 (`workflowbench.py`).
+- **501** mistake kinds planted in the tests, each refused.
+- **17/17** planted breaks refused in 12/42 languages; 11 unchecked (cloudflare, dockerfile, elixir, fsharp, haskell, json, markdown, sql, thea, toml, yaml), 19 no example (`enforce.py`, v3.53.0).
+- **18/18** handoffs carry the right checks (schema only → with Thea): Opus 0/6 → 6/6; Sonnet 0/6 → 6/6; Haiku 0/6 → 6/6 (`workflowbench.py`).
 - **24/24** solo commits clean with or without the hook on these tasks; a planted broken commit is refused.
-- **112** failure shapes in the ledger: 196 sightings, 45 recurred; 93 guarded.
+- **113** failure shapes in the ledger: 197 sightings, 45 recurred; 94 guarded.
+- **In use** (`agents.py --field`, v3.53.0): 49 refusals (12 shapes), 32 re-fired; verify 13 pass / 7 fail; 12/12 lands armed; lessons unmeasured.
 - **6** agent controls that block, not warn: narrow_tools, sandbox, budget, approval, effects, audit.
-- **10 KiB** install: 1 module, 1 dependency — 1 in total with its own dependencies.
+- **10 KiB** install: 1 module, 1 dependency.
 <!-- END generated: measured-benefits -->
 
 ## For agents
@@ -192,7 +171,7 @@ read the same figures from [.agent/facts.json](.agent/facts.json).
 - **5** entry kinds — `tools/tools.schema.json` `$defs.entry.x-kinds`
 - **8** change classes (verification profiles) — `atlas.yaml/verification_policy/profiles`
 - **14** task profiles — `atlas.yaml/task_profiles`
-- **98** python files in the harness — `scripts/*.py`, every one held by the `lint` · `format` · `typecheck` gates
+- **100** python files in the harness — `scripts/*.py`, every one held by the `lint` · `format` · `typecheck` gates
 <!-- END generated: repository-facts -->
 
 ## Find your way
